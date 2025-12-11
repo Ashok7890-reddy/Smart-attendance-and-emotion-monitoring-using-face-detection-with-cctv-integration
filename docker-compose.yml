@@ -1,0 +1,495 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: smart_attendance_db
+    environment:
+      POSTGRES_DB: smart_attendance
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - smart_attendance_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: smart_attendance_redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - smart_attendance_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Face Recognition Service
+  face_recognition_service:
+    build:
+      context: .
+      dockerfile: docker/face-recognition.Dockerfile
+    container_name: face_recognition_service
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DB_HOST=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_HOST=redis
+      - SERVICE_NAME=face_recognition
+      - FACE_RECOGNITION_MODEL_PATH=/app/models/facenet
+      - LIVENESS_MODEL_PATH=/app/models/liveness
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Emotion Analysis Service
+  emotion_analysis_service:
+    build:
+      context: .
+      dockerfile: docker/emotion-analysis.Dockerfile
+    container_name: emotion_analysis_service
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DB_HOST=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_HOST=redis
+      - SERVICE_NAME=emotion_analysis
+      - EMOTION_MODEL_PATH=/app/models/emotion_classifier
+    volumes:
+      - ./models:/app/models
+      - ./logs:/app/logs
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Attendance Management Service
+  attendance_service:
+    build:
+      context: .
+      dockerfile: docker/attendance-service.Dockerfile
+    container_name: attendance_service
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DB_HOST=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_HOST=redis
+      - SERVICE_NAME=attendance_management
+      - FACE_RECOGNITION_SERVICE_URL=http://face_recognition_service:8000
+      - EMOTION_ANALYSIS_SERVICE_URL=http://emotion_analysis_service:8000
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      face_recognition_service:
+        condition: service_started
+      emotion_analysis_service:
+        condition: service_started
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+
+  # Validation Service
+  validation_service:
+    build:
+      context: .
+      dockerfile: docker/validation-service.Dockerfile
+    container_name: validation_service
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DB_HOST=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_HOST=redis
+      - SERVICE_NAME=validation
+      - ATTENDANCE_SERVICE_URL=http://attendance_service:8000
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "8004:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      attendance_service:
+        condition: service_started
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
+  # API Gateway
+  api_gateway:
+    build:
+      context: .
+      dockerfile: docker/attendance-service.Dockerfile
+    container_name: api_gateway
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DB_HOST=postgres
+      - DB_PASSWORD=${DB_PASSWORD:-postgres}
+      - REDIS_HOST=redis
+      - SERVICE_NAME=api_gateway
+      - FACE_RECOGNITION_SERVICE_URL=http://face_recognition_service:8000
+      - EMOTION_ANALYSIS_SERVICE_URL=http://emotion_analysis_service:8000
+      - ATTENDANCE_SERVICE_URL=http://attendance_service:8000
+      - VALIDATION_SERVICE_URL=http://validation_service:8000
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "8000:8000"
+    depends_on:
+      - face_recognition_service
+      - emotion_analysis_service
+      - attendance_service
+      - validation_service
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  # Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: smart_attendance_frontend
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000/api/v1
+      - REACT_APP_WS_URL=ws://localhost:8080
+    ports:
+      - "80:80"
+    depends_on:
+      - api_gateway
+      - websocket_server
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  # WebSocket Server
+  websocket_server:
+    build:
+      context: .
+      dockerfile: docker/websocket-server.Dockerfile
+    container_name: websocket_server
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - REDIS_HOST=redis
+      - SERVICE_NAME=websocket
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: localhost:24224
+        tag: smart_attendance.websocket
+
+  # Monitoring and Logging Services
+  
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  # AlertManager for alerting
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    container_name: alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager
+      - alertmanager_data:/alertmanager
+    ports:
+      - "9093:9093"
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.1'
+
+  # Elasticsearch for log storage
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    container_name: elasticsearch
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=false
+      - xpack.security.enrollment.enabled=false
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+
+  # Fluentd for log aggregation
+  fluentd:
+    image: fluent/fluentd:v1.16-debian-1
+    container_name: fluentd
+    volumes:
+      - ./logging/fluentd:/fluentd/etc
+      - fluentd_logs:/fluentd/log
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    networks:
+      - smart_attendance_network
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
+  # Kibana for log visualization
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - xpack.security.enabled=false
+    ports:
+      - "5601:5601"
+    networks:
+      - smart_attendance_network
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
+  # Node Exporter for system metrics
+  node_exporter:
+    image: prom/node-exporter:v1.6.0
+    container_name: node_exporter
+    command:
+      - '--path.rootfs=/host'
+    volumes:
+      - '/:/host:ro,rslave'
+    ports:
+      - "9100:9100"
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.1'
+
+  # cAdvisor for container metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    container_name: cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8081:8080"
+    networks:
+      - smart_attendance_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
+
+  # Redis Exporter for Redis metrics
+  redis_exporter:
+    image: oliver006/redis_exporter:v1.52.0
+    container_name: redis_exporter
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    ports:
+      - "9121:9121"
+    networks:
+      - smart_attendance_network
+    depends_on:
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
+
+  # Postgres Exporter for PostgreSQL metrics
+  postgres_exporter:
+    image: prometheuscommunity/postgres-exporter:v0.13.2
+    container_name: postgres_exporter
+    environment:
+      - DATA_SOURCE_NAME=postgresql://postgres:${DB_PASSWORD:-postgres}@postgres:5432/smart_attendance?sslmode=disable
+    ports:
+      - "9187:9187"
+    networks:
+      - smart_attendance_network
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+  elasticsearch_data:
+  fluentd_logs:
+
+networks:
+  smart_attendance_network:
+    driver: bridge

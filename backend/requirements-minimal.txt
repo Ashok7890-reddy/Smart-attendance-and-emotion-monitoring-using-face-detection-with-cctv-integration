@@ -1,0 +1,28 @@
+# Minimal requirements for mock mode backend
+# Install time: ~2 minutes
+
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+
+# Database (optional)
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+
+# Redis (optional)
+redis==5.0.1
+
+# Security
+cryptography==41.0.7
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+
+# HTTP Client
+httpx==0.25.2
+
+# Configuration
+python-dotenv==1.0.0
+
+# Utilities
+python-multipart==0.0.6

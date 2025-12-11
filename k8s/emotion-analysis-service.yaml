@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: emotion-analysis-service
+  namespace: smart-attendance
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: emotion-analysis-service
+  template:
+    metadata:
+      labels:
+        app: emotion-analysis-service
+    spec:
+      containers:
+      - name: emotion-analysis-service
+        image: smart-attendance/emotion-analysis:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: SERVICE_NAME
+          value: "emotion_analysis"
+        envFrom:
+        - configMapRef:
+            name: smart-attendance-config
+        - secretRef:
+            name: smart-attendance-secrets
+        volumeMounts:
+        - name: models-storage
+          mountPath: /app/models
+        - name: logs-storage
+          mountPath: /app/logs
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+      volumes:
+      - name: models-storage
+        persistentVolumeClaim:
+          claimName: models-pvc
+      - name: logs-storage
+        persistentVolumeClaim:
+          claimName: logs-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: emotion-analysis-service
+  namespace: smart-attendance
+spec:
+  selector:
+    app: emotion-analysis-service
+  ports:
+  - port: 8000
+    targetPort: 8000
+  type: ClusterIP

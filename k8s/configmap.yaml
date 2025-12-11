@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smart-attendance-config
+  namespace: smart-attendance
+data:
+  ENVIRONMENT: "production"
+  DB_HOST: "postgres-service"
+  REDIS_HOST: "redis-service"
+  FACE_RECOGNITION_SERVICE_URL: "http://face-recognition-service:8000"
+  EMOTION_ANALYSIS_SERVICE_URL: "http://emotion-analysis-service:8000"
+  ATTENDANCE_SERVICE_URL: "http://attendance-service:8000"
+  VALIDATION_SERVICE_URL: "http://validation-service:8000"
+  FACE_RECOGNITION_MODEL_PATH: "/app/models/facenet"
+  LIVENESS_MODEL_PATH: "/app/models/liveness"
+  EMOTION_MODEL_PATH: "/app/models/emotion_classifier"
+  LOG_LEVEL: "INFO"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: smart-attendance
+data:
+  REACT_APP_API_URL: "https://api.smart-attendance.local/api/v1"
+  REACT_APP_WS_URL: "wss://ws.smart-attendance.local"

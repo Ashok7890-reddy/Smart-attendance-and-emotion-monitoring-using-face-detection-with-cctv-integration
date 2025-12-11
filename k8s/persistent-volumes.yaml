@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: models-pvc
+  namespace: smart-attendance
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: nfs-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: logs-pvc
+  namespace: smart-attendance
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: nfs-storage
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: smart-attendance
+data:
+  01-init.sql: |
+    -- Initialize Smart Attendance System Database
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    
+    -- Create database user for application
+    CREATE USER smart_attendance_user WITH PASSWORD 'smart_attendance_password';
+    GRANT ALL PRIVILEGES ON DATABASE smart_attendance TO smart_attendance_user;
+    
+    -- Set timezone
+    SET timezone = 'UTC';
