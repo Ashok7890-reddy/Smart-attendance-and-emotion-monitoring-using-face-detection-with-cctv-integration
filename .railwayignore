@@ -10,6 +10,11 @@ logs/
 .env.development
 .env.example
 docker-compose*.yml
+docker-compose.yml
 Dockerfile
+Dockerfile.*
 *.md
 !README.md
+!DEPLOYMENT.md
+docker/
+k8s/
