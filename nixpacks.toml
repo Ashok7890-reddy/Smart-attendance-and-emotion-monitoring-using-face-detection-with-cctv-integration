@@ -1,8 +1,10 @@
 [phases.setup]
 nixPkgs = ["python311", "nodejs-18_x"]
+aptPkgs = ["libgl1-mesa-glx", "libglib2.0-0"]
 
 [phases.install]
 cmds = [
+  "pip install --upgrade pip",
   "pip install -r backend/requirements.txt",
   "cd frontend && npm ci"
 ]
@@ -13,4 +15,4 @@ cmds = [
 ]
 
 [start]
-cmd = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+cmd = "cd /app && uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
