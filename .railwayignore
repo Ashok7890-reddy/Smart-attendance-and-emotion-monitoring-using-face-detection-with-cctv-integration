@@ -1,0 +1,15 @@
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.vscode/
+.kiro/
+logs/
+*.log
+.env.development
+.env.example
+docker-compose*.yml
+Dockerfile
+*.md
+!README.md

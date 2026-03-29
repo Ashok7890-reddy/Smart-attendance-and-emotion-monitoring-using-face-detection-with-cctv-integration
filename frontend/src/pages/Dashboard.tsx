@@ -1,10 +1,95 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { useAttendanceSession } from '@/hooks/useAttendanceSession'
 import { AttendanceStats } from '@/components/Dashboard/AttendanceStats'
 import { StudentList } from '@/components/Dashboard/StudentList'
 import { SessionControls } from '@/components/Dashboard/SessionControls'
 import { MissingStudentAlert } from '@/components/Dashboard/MissingStudentAlert'
 import { websocketService } from '@/services/websocket'
+
+// Recent Submissions Component
+const RecentSubmissions: React.FC = () => {
+  const [recentSessions, setRecentSessions] = useState<any[]>([])
+
+  useEffect(() => {
+    const loadRecentSessions = () => {
+      try {
+        const submittedSessions = JSON.parse(localStorage.getItem('submittedSessions') || '[]')
+        // Get last 3 sessions, sorted by submission time
+        const recent = submittedSessions
+          .sort((a: any, b: any) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
+          .slice(0, 3)
+        setRecentSessions(recent)
+      } catch (error) {
+        console.error('Error loading recent sessions:', error)
+      }
+    }
+
+    loadRecentSessions()
+    // Refresh every 30 seconds
+    const interval = setInterval(loadRecentSessions, 30000)
+    return () => clearInterval(interval)
+  }, [])
+
+  if (recentSessions.length === 0) {
+    return (
+      <div className="text-center py-8 text-gray-500">
+        <p className="text-sm">No submitted sessions yet</p>
+        <p className="text-xs mt-1">Complete a classroom session to see submissions here</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      {recentSessions.map((session, index) => (
+        <div key={session.sessionId} className="p-3 bg-gray-50 rounded-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-gray-900">
+                Session {session.sessionId.split('-')[1]?.slice(-4) || 'Unknown'}
+              </p>
+              <p className="text-xs text-gray-600">
+                {session.presentStudents.length}/{session.totalStudents} present 
+                ({Math.round((session.presentStudents.length / session.totalStudents) * 100)}%)
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs text-gray-500">
+                {new Date(session.submittedAt).toLocaleDateString()}
+              </p>
+              <p className="text-xs text-gray-500">
+                {new Date(session.submittedAt).toLocaleTimeString()}
+              </p>
+            </div>
+          </div>
+          
+          {/* Engagement indicator */}
+          <div className="mt-2 flex items-center space-x-2">
+            <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+              <div 
+                className="bg-green-500 h-1.5 rounded-full" 
+                style={{
+                  width: `${Math.round(
+                    (session.engagementStats.interested / 
+                     (session.engagementStats.interested + session.engagementStats.bored + 
+                      session.engagementStats.confused + session.engagementStats.sleepy)) * 100
+                  )}%`
+                }}
+              ></div>
+            </div>
+            <span className="text-xs text-gray-500">
+              {Math.round(
+                (session.engagementStats.interested / 
+                 (session.engagementStats.interested + session.engagementStats.bored + 
+                  session.engagementStats.confused + session.engagementStats.sleepy)) * 100
+              )}% engaged
+            </span>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export const Dashboard: React.FC = () => {
   const {
@@ -59,14 +144,31 @@ export const Dashboard: React.FC = () => {
       />
 
       {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Student List */}
-        <div className="lg:col-span-1">
+        <div className="lg:col-span-2">
           <StudentList students={students} isLoading={isLoading} />
         </div>
 
-        {/* Emotion Analytics */}
-        <div className="lg:col-span-1">
+        {/* Right Sidebar */}
+        <div className="lg:col-span-1 space-y-6">
+          {/* Recent Submitted Sessions */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Recent Submissions
+              </h3>
+              <button
+                onClick={() => window.location.href = '/reports'}
+                className="text-primary-600 hover:text-primary-700 text-sm font-medium"
+              >
+                View All →
+              </button>
+            </div>
+            <RecentSubmissions />
+          </div>
+
+          {/* Emotion Analytics */}
           <div className="card">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">
               Real-time Emotion Analytics

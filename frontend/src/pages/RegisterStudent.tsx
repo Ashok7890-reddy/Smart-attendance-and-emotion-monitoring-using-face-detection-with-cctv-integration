@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { WebcamCapture } from '@/components/Camera/WebcamCapture'
 import { UserPlusIcon, CameraIcon } from '@heroicons/react/24/outline'
-import { faceApiService } from '@/services/faceApiService'
+import { enhancedFaceService } from '@/services/enhancedFaceService'
 
 export const RegisterStudent: React.FC = () => {
   const navigate = useNavigate()
@@ -48,32 +48,88 @@ export const RegisterStudent: React.FC = () => {
     try {
       console.log('🔍 Detecting face with REAL ML...')
       
-      // Create image element from base64
-      const img = await faceApiService.createImageElement(imageData)
+      // Create optimized image element from base64
+      const img = await enhancedFaceService.createImageElement(imageData)
 
-      // Detect face and extract descriptor (embedding)
-      const detection = await faceApiService.detectFace(img)
+      // Detect face and extract descriptor (embedding) using enhanced service
+      const detection = await enhancedFaceService.detectFace(img)
       
       if (!detection) {
         throw new Error('No face detected. Please ensure your face is clearly visible and try again.')
       }
 
       console.log('✅ Face detected! Confidence:', detection.detection.score.toFixed(3))
-      console.log('📊 Embedding dimensions:', detection.descriptor.length)
+      console.log('🎯 Model used:', detection.modelUsed)
+      console.log('📊 Embedding dimensions:', detection.descriptor.length + 'D (' + detection.embeddingDimension + 'D)')
+      console.log('⚡ Processing time:', detection.processingTime?.toFixed(1) + 'ms')
+      
+      // Check face quality
+      const faceScore = detection.detection.score
+      if (faceScore < 0.8) {
+        console.warn('⚠️ Low face detection confidence. Try better lighting or angle.')
+      }
+      
+      // Check face size
+      const faceBox = detection.detection.box
+      const faceArea = faceBox.width * faceBox.height
+      console.log('Face area:', Math.round(faceArea), 'pixels')
+      
+      if (faceArea < 10000) {
+        console.warn('⚠️ Face is small. Move closer to camera for better recognition.')
+      }
+      
+      // Enhanced descriptor quality assessment
+      const qualityAssessment = enhancedFaceService.assessImageQuality(img)
+      console.log('Image quality assessment:', qualityAssessment.quality, '(score:', qualityAssessment.score + ')')
+      
+      if (qualityAssessment.recommendations.length > 0) {
+        console.warn('⚠️ Image quality recommendations:')
+        qualityAssessment.recommendations.forEach(rec => console.warn('  •', rec))
+      }
+      
+      // Check descriptor quality based on model type
+      const descriptorSum = detection.descriptor.reduce((sum: number, val: number) => sum + Math.abs(val), 0)
+      console.log('Descriptor quality score:', descriptorSum.toFixed(3))
+      
+      const isONNX = detection.modelUsed?.includes('ONNX')
+      const minQualityThreshold = isONNX ? 0.8 : 5.0 // Different thresholds for different models
+      const minNonZeroCount = isONNX ? 400 : 100 // ONNX has 512D vs 128D
+      
+      if (descriptorSum < minQualityThreshold) {
+        console.warn('⚠️ Low quality face descriptor. Try better lighting or retake photo.')
+      }
+      
+      // Validate descriptor has meaningful values
+      const nonZeroCount = detection.descriptor.filter((val: number) => Math.abs(val) > 0.001).length
+      const totalDimensions = detection.descriptor.length
+      console.log('Non-zero descriptor values:', nonZeroCount, '/', totalDimensions)
+      
+      if (nonZeroCount < minNonZeroCount) {
+        throw new Error('Poor quality face capture. Please ensure good lighting and try again.')
+      }
 
-      // Store student with face descriptor
+      // Store student with enhanced face descriptor
       const students = JSON.parse(localStorage.getItem('students') || '[]')
       const newStudent = {
         ...formData,
-        face_descriptor: Array.from(detection.descriptor), // 128-d embedding
+        face_descriptor: Array.from(detection.descriptor), // High-quality embedding (128D or 512D)
         face_image: imageData, // Optional: store image for display
-        registered_at: new Date().toISOString()
+        registered_at: new Date().toISOString(),
+        model_used: detection.modelUsed, // Track which model was used for registration
+        embedding_dimension: detection.embeddingDimension, // Track embedding dimension
+        registration_quality: qualityAssessment.quality, // Store quality assessment
+        processing_time: detection.processingTime // Store processing performance
       }
       
       students.push(newStudent)
       localStorage.setItem('students', JSON.stringify(students))
       
-      console.log('✅ Student registered with REAL face recognition!')
+      console.log('✅ Student registered with enhanced face recognition!')
+      console.log('📊 Registration details:')
+      console.log('  • Model:', detection.modelUsed)
+      console.log('  • Embedding:', detection.embeddingDimension + 'D')
+      console.log('  • Quality:', qualityAssessment.quality)
+      console.log('  • Processing time:', detection.processingTime?.toFixed(1) + 'ms')
       console.log('Total students:', students.length)
       
       setSuccess(true)

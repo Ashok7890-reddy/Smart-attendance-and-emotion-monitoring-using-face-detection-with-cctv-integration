@@ -17,11 +17,76 @@ export const useReports = () => {
   // Query for reports in date range
   const { data: reports = [], isLoading, refetch } = useQuery(
     ['reports', startDate, endDate],
-    () => attendanceAPI.getReportsByDateRange(startDate, endDate),
+    () => getSubmittedSessionsInRange(startDate, endDate),
     {
       enabled: !!startDate && !!endDate,
     }
   )
+
+  // Get submitted sessions from localStorage and convert to report format
+  const getSubmittedSessionsInRange = (start: string, end: string): AttendanceReport[] => {
+    try {
+      const submittedSessions = JSON.parse(localStorage.getItem('submittedSessions') || '[]')
+      const startDate = new Date(start)
+      const endDate = new Date(end)
+      endDate.setHours(23, 59, 59, 999) // Include full end date
+      
+      return submittedSessions
+        .filter((session: any) => {
+          const sessionDate = new Date(session.submittedAt)
+          return sessionDate >= startDate && sessionDate <= endDate
+        })
+        .map((session: any) => convertSessionToReport(session))
+    } catch (error) {
+      console.error('Error loading submitted sessions:', error)
+      return []
+    }
+  }
+
+  // Convert submitted session to AttendanceReport format
+  const convertSessionToReport = (session: any): AttendanceReport => {
+    const presentStudents = session.finalAttendance.filter((s: any) => s.status === 'present')
+    const absentStudents = session.finalAttendance.filter((s: any) => s.status === 'absent')
+    
+    // Calculate engagement breakdown
+    const totalEngagement = session.engagementStats.interested + 
+                           session.engagementStats.bored + 
+                           session.engagementStats.confused + 
+                           session.engagementStats.sleepy
+    
+    const engagementBreakdown = {
+      interested: totalEngagement > 0 ? Math.round((session.engagementStats.interested / totalEngagement) * 100) : 0,
+      bored: totalEngagement > 0 ? Math.round((session.engagementStats.bored / totalEngagement) * 100) : 0,
+      confused: totalEngagement > 0 ? Math.round((session.engagementStats.confused / totalEngagement) * 100) : 0,
+      sleepy: totalEngagement > 0 ? Math.round((session.engagementStats.sleepy / totalEngagement) * 100) : 0
+    }
+    
+    const engagementScore = engagementBreakdown.interested + (engagementBreakdown.bored * 0.5)
+    
+    return {
+      sessionId: session.sessionId,
+      date: session.submittedAt,
+      totalStudents: session.totalStudents,
+      presentCount: presentStudents.length,
+      absentCount: absentStudents.length,
+      attendancePercentage: Math.round((presentStudents.length / session.totalStudents) * 100),
+      engagementScore: Math.round(engagementScore),
+      engagementBreakdown,
+      students: session.finalAttendance.map((student: any) => ({
+        studentId: student.student_id,
+        name: student.name,
+        type: student.student_type,
+        isPresent: student.status === 'present',
+        gateEntry: null, // We don't track gate entry in the session data currently
+        classroomEntry: student.status === 'present' ? session.submittedAt : null,
+        confidence: student.confidence,
+        emotion: student.emotion,
+        detectionCount: student.detectionCount
+      })),
+      submittedAt: session.submittedAt,
+      submittedBy: session.submittedBy || 'faculty'
+    }
+  }
 
   const exportReport = async (report: AttendanceReport, format: 'pdf' | 'csv' | 'excel') => {
     try {

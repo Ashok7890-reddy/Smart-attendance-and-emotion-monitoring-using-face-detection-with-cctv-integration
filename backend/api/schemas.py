@@ -306,3 +306,62 @@ class MultipleFaceRecognitionResponse(BaseModel):
     """Schema for multiple face recognition response."""
     detections: List[FaceRecognitionResponse]
     total_faces: int = Field(..., description="Total number of faces detected in image")
+
+
+# DeepFace Emotion Analysis Schemas
+class EmotionAnalysisRequest(BaseModel):
+    """Schema for DeepFace emotion analysis request."""
+    image_base64: str = Field(..., description="Base64 encoded image data")
+    student_id: str = Field(default="unknown", description="Student identifier")
+
+
+class EmotionAnalysisResponse(BaseModel):
+    """Schema for DeepFace emotion analysis response."""
+    success: bool
+    student_id: str
+    emotion: str = Field(..., description="Engagement level (interested, bored, confused, sleepy)")
+    raw_emotion: str = Field(..., description="Raw emotion from DeepFace (happy, sad, angry, etc.)")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Emotion detection confidence")
+    engagement_score: float = Field(..., ge=0.0, le=1.0, description="Calculated engagement score")
+    timestamp: str = Field(..., description="Analysis timestamp in ISO format")
+    emotion_breakdown: Dict[str, Any] = Field(..., description="Detailed emotion analysis")
+
+
+class BatchEmotionRequest(BaseModel):
+    """Schema for batch emotion analysis request."""
+    images_base64: List[str] = Field(..., min_items=1, max_items=50, description="List of base64 encoded images")
+    student_ids: Optional[List[str]] = Field(None, description="List of student identifiers")
+
+
+class BatchEmotionResponse(BaseModel):
+    """Schema for batch emotion analysis response."""
+    success: bool
+    total_processed: int
+    results: List[EmotionAnalysisResponse]
+
+
+class EmotionStatisticsResponse(BaseModel):
+    """Schema for comprehensive emotion statistics response."""
+    success: bool
+    session_id: str
+    statistics: Dict[str, Any] = Field(..., description="Detailed emotion statistics and analytics")
+
+
+class RealTimeEmotionMetrics(BaseModel):
+    """Schema for real-time emotion metrics."""
+    success: bool
+    session_id: str
+    metrics: Dict[str, Any] = Field(..., description="Real-time engagement metrics")
+
+
+class SessionUpdateRequest(BaseModel):
+    """Schema for session emotion update request."""
+    student_id: str = Field(default="unknown", description="Student identifier")
+
+
+class SessionUpdateResponse(BaseModel):
+    """Schema for session emotion update response."""
+    success: bool
+    session_id: str
+    emotion_result: Dict[str, Any]
+    session_statistics: Dict[str, Any]

@@ -35,6 +35,40 @@ api.interceptors.response.use(
 // Mock delay function
 const mockDelay = (ms: number = 500) => new Promise(resolve => setTimeout(resolve, ms))
 
+// DeepFace emotion analysis API
+export const emotionAPI = {
+  /**
+   * Analyze emotion using DeepFace (Facenet512 + retinaface) on the backend.
+   * Falls back to null if backend is unavailable.
+   */
+  analyzeEmotion: async (imageBase64: string, studentId: string = 'unknown'): Promise<{
+    emotion: string
+    confidence: number
+    engagement: string
+    engagementScore: number
+    rawEmotion: string
+    emotionBreakdown: Record<string, number>
+  } | null> => {
+    try {
+      const response = await api.post('/api/v1/deepface/analyze-emotion-base64', {
+        image_base64: imageBase64,
+        student_id: studentId
+      })
+      const d = response.data
+      return {
+        emotion: d.raw_emotion,
+        confidence: d.confidence,
+        engagement: d.emotion,
+        engagementScore: d.engagement_score,
+        rawEmotion: d.raw_emotion,
+        emotionBreakdown: d.emotion_breakdown?.raw_emotions || {}
+      }
+    } catch {
+      return null
+    }
+  }
+}
+
 export const attendanceAPI = {
   // Get current active session
   getCurrentSession: async (): Promise<AttendanceSession | null> => {

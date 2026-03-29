@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { FaceSmileIcon, ChartBarIcon } from '@heroicons/react/24/outline'
 
 interface EmotionData {
@@ -22,10 +22,24 @@ interface EmotionAnalyticsProps {
   entries: Array<{
     emotion?: string
     engagement?: string
+    engagement_score?: number
+    emotion_breakdown?: any
   }>
 }
 
 export const EmotionAnalytics: React.FC<EmotionAnalyticsProps> = ({ entries }) => {
+  const [lastUpdateTime, setLastUpdateTime] = useState(Date.now())
+  
+  // Force re-render when entries change
+  useEffect(() => {
+    setLastUpdateTime(Date.now())
+    console.log('📊 EmotionAnalytics entries updated:', entries.length)
+  }, [entries])
+  
+  // Debug logging
+  console.log('📊 EmotionAnalytics received entries:', entries.length)
+  console.log('📊 Sample entries:', entries.slice(0, 3))
+  
   // Calculate emotion distribution
   const emotionCounts: { [key: string]: number } = {}
   const engagementCounts: { [key: string]: number } = {}
@@ -33,11 +47,16 @@ export const EmotionAnalytics: React.FC<EmotionAnalyticsProps> = ({ entries }) =
   entries.forEach(entry => {
     if (entry.emotion) {
       emotionCounts[entry.emotion] = (emotionCounts[entry.emotion] || 0) + 1
+      console.log(`📊 Counting emotion: ${entry.emotion}`)
     }
     if (entry.engagement) {
       engagementCounts[entry.engagement] = (engagementCounts[entry.engagement] || 0) + 1
+      console.log(`📊 Counting engagement: ${entry.engagement}`)
     }
   })
+
+  console.log('📊 Final emotion counts:', emotionCounts)
+  console.log('📊 Final engagement counts:', engagementCounts)
 
   const total = entries.length
 
@@ -124,15 +143,39 @@ export const EmotionAnalytics: React.FC<EmotionAnalyticsProps> = ({ entries }) =
         <p className="text-sm text-gray-500 text-center py-8">
           No emotion data yet. Start capturing to see analytics.
         </p>
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <p className="text-xs text-blue-800">
+            💡 <strong>Tip:</strong> Make sure face detection is working and students are being recognized. 
+            Emotion analysis will appear here once faces are detected.
+          </p>
+        </div>
+        
+        {/* Face-API.js Emotion Recognition */}
+        <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+          <p className="text-xs text-green-800 mb-2">
+            🎭 <strong>Face-API.js Emotion Recognition:</strong> Real-time emotion analysis
+          </p>
+          <div className="text-xs text-green-700">
+            <div>• 7 emotion categories (happy, sad, angry, fear, surprise, disgust, neutral)</div>
+            <div>• 4 engagement levels (interested, bored, confused, sleepy)</div>
+            <div>• Real-time engagement scoring</div>
+            <div>• Client-side processing for privacy</div>
+          </div>
+        </div>
       </div>
     )
   }
 
   return (
     <div className="bg-white rounded-lg shadow-lg p-6">
-      <div className="flex items-center mb-4">
-        <FaceSmileIcon className="h-6 w-6 text-purple-600 mr-2" />
-        <h3 className="text-lg font-semibold text-gray-900">Emotion Analytics</h3>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center">
+          <FaceSmileIcon className="h-6 w-6 text-purple-600 mr-2" />
+          <h3 className="text-lg font-semibold text-gray-900">Emotion Analytics</h3>
+        </div>
+        <div className="text-xs text-gray-500">
+          Updated: {new Date(lastUpdateTime).toLocaleTimeString()}
+        </div>
       </div>
 
       {/* Overall Engagement Score */}
@@ -236,6 +279,33 @@ export const EmotionAnalytics: React.FC<EmotionAnalyticsProps> = ({ entries }) =
               {(emotionCounts['sad'] || 0) + (emotionCounts['angry'] || 0) + (emotionCounts['fearful'] || 0)}
             </p>
           </div>
+        </div>
+        
+        {/* Advanced Analytics Info */}
+        <div className="mt-3 p-2 bg-gray-50 rounded text-xs">
+          <p className="text-gray-600">
+            <strong>Analytics:</strong> Entries: {total}, 
+            Emotions: {Object.keys(emotionCounts).length}, 
+            Engagement: {Object.keys(engagementCounts).length}
+          </p>
+          {total > 0 && (
+            <>
+              <p className="text-gray-600 mt-1">
+                Last emotion: {entries[0]?.emotion || 'none'}, 
+                Last engagement: {entries[0]?.engagement || 'none'}
+              </p>
+              {entries[0]?.engagement_score && (
+                <p className="text-gray-600 mt-1">
+                  Engagement score: {(entries[0].engagement_score * 100).toFixed(1)}%
+                </p>
+              )}
+              {entries[0]?.engagement_score && (
+                <p className="text-gray-600 mt-1">
+                  🎭 Face-API.js: Active emotion detection
+                </p>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>

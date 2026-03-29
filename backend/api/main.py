@@ -80,6 +80,14 @@ def create_app() -> FastAPI:
     app.include_router(attendance.router, prefix="/api/v1/attendance", tags=["Attendance"])
     app.include_router(face_recognition.router, prefix="/api/v1/face-recognition", tags=["Face Recognition"])
     
+    # DeepFace emotion analysis (Facenet512 + retinaface)
+    try:
+        from .routers.deepface_emotion import router as deepface_router
+        app.include_router(deepface_router, tags=["DeepFace Emotion"])
+        logger.info("✅ DeepFace emotion analysis enabled (Facenet512 + retinaface)")
+    except Exception as e:
+        logger.warning(f"⚠️ DeepFace not available, falling back to face-api.js: {e}")
+    
     # Include WebSocket router
     from .websocket import websocket_router
     app.include_router(websocket_router, prefix="/api/v1", tags=["WebSocket"])
@@ -95,11 +103,37 @@ def create_app() -> FastAPI:
     
     @app.get("/")
     async def root():
-        """Root endpoint."""
+        """Root endpoint - serves frontend in production."""
         return {
             "message": "Smart Attendance System API",
             "docs": "/api/v1/docs"
         }
+    
+    # Serve frontend static files in production
+    import os
+    from pathlib import Path
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import FileResponse
+    
+    frontend_dist = Path(__file__).parent.parent.parent / "frontend" / "dist"
+    
+    if frontend_dist.exists() and os.getenv("ENVIRONMENT") == "production":
+        logger.info(f"Serving frontend from {frontend_dist}")
+        
+        # Serve static assets
+        app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
+        
+        # Catch-all route for SPA - must be last
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str):
+            """Serve React SPA for all non-API routes."""
+            if full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="API endpoint not found")
+            
+            index_file = frontend_dist / "index.html"
+            if index_file.exists():
+                return FileResponse(index_file)
+            raise HTTPException(status_code=404, detail="Frontend not built")
     
     return app
 

@@ -94,7 +94,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div>
                     <div className="text-sm font-medium text-gray-900">
-                      {report.className}
+                      Session {report.sessionId.slice(-6)}
                     </div>
                     <div className="text-sm text-gray-500">
                       {format(new Date(report.date), 'MMM dd, yyyy')}
@@ -104,7 +104,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="flex items-center">
                     <div className="text-sm text-gray-900">
-                      {report.presentStudents}/{report.totalStudents}
+                      {report.presentCount}/{report.totalStudents}
                     </div>
                     <span className={`ml-2 inline-flex px-2 py-1 text-xs font-medium rounded-full ${getAttendanceColor(report.attendancePercentage)}`}>
                       {report.attendancePercentage}%
@@ -112,12 +112,12 @@ export const ReportTable: React.FC<ReportTableProps> = ({
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getEngagementColor(report.emotionStatistics.engagementScore)}`}>
-                    {report.emotionStatistics.engagementScore}%
+                  <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getEngagementColor(report.engagementScore)}`}>
+                    {report.engagementScore}%
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                  {report.startTime} - {report.endTime}
+                  {format(new Date(report.submittedAt), 'HH:mm')}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                   <div className="flex items-center justify-end space-x-2">

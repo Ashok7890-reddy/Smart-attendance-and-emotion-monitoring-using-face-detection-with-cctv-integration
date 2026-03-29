@@ -37,15 +37,31 @@ export interface EmotionStatistics {
 
 export interface AttendanceReport {
   sessionId: string
-  className: string
   date: string
-  startTime: string
-  endTime: string
   totalStudents: number
-  presentStudents: number
+  presentCount: number
+  absentCount: number
   attendancePercentage: number
-  emotionStatistics: EmotionStatistics
-  students: Student[]
+  engagementScore: number
+  engagementBreakdown: {
+    interested: number
+    bored: number
+    confused: number
+    sleepy: number
+  }
+  students: {
+    studentId: string
+    name: string
+    type: string
+    isPresent: boolean
+    gateEntry?: string | null
+    classroomEntry?: string | null
+    confidence?: number
+    emotion?: string | null
+    detectionCount?: number
+  }[]
+  submittedAt: string
+  submittedBy: string
 }
 
 export interface SystemAlert {

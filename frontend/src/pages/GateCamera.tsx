@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AutoCaptureCamera } from '@/components/Camera/AutoCaptureCamera'
 import { ArrowRightOnRectangleIcon } from '@heroicons/react/24/outline'
-import { faceApiService } from '@/services/faceApiService'
+import { enhancedFaceService } from '@/services/enhancedFaceService'
 
 interface GateEntry {
   student_id: string
@@ -24,17 +24,20 @@ export const GateCamera: React.FC = () => {
     try {
       console.log('🔍 Recognizing face with REAL ML...')
       
-      // Create image element
-      const img = await faceApiService.createImageElement(imageData)
+      // Create optimized image element for enhanced recognition
+      const img = await enhancedFaceService.createImageElement(imageData)
 
-      // Detect face
-      const detection = await faceApiService.detectFace(img)
+      // Detect face using enhanced service (ONNX + face-api.js hybrid)
+      const detection = await enhancedFaceService.detectFace(img)
       
       if (!detection) {
         throw new Error('No face detected in image')
       }
 
       console.log('✅ Face detected! Confidence:', detection.detection.score.toFixed(3))
+      console.log('🎯 Model used:', detection.modelUsed)
+      console.log('📊 Embedding dimension:', detection.embeddingDimension + 'D')
+      console.log('⚡ Processing time:', detection.processingTime?.toFixed(1) + 'ms')
 
       // Get registered students
       const students = JSON.parse(localStorage.getItem('students') || '[]')
@@ -46,25 +49,37 @@ export const GateCamera: React.FC = () => {
       // Find best match using REAL face recognition
       let bestMatch = null
       let bestSimilarity = 0
-      const threshold = 0.6 // 60% similarity threshold
+      // Dynamic threshold based on model used
+      const threshold = detection.modelUsed?.includes('ONNX') ? 0.85 : 0.60 // Higher threshold for ONNX models
+
+      console.log(`🔍 Comparing face against ${students.length} registered students...`)
 
       for (const student of students) {
         const storedDescriptor = new Float32Array(student.face_descriptor)
-        const similarity = faceApiService.compareFaces(
+        const similarity = enhancedFaceService.compareFaces(
           detection.descriptor,
           storedDescriptor
         )
 
         console.log(`Comparing with ${student.name}: ${(similarity * 100).toFixed(1)}%`)
 
-        if (similarity > bestSimilarity && similarity > threshold) {
+        if (similarity > bestSimilarity) {
           bestSimilarity = similarity
-          bestMatch = student
+          if (similarity > threshold) {
+            bestMatch = student
+            console.log(`✅ New best match: ${student.name} (${(similarity * 100).toFixed(1)}%)`)
+          } else {
+            console.log(`⚠️ Close but below threshold: ${student.name} (${(similarity * 100).toFixed(1)}% < 60%)`)
+          }
         }
       }
 
+      const thresholdPercent = (threshold * 100).toFixed(0)
+      console.log(`📊 Best similarity found: ${(bestSimilarity * 100).toFixed(1)}% (threshold: ${thresholdPercent}%)`)
+      console.log(`🎯 Recognition model: ${detection.modelUsed} (${detection.embeddingDimension}D embeddings)`)
+
       if (!bestMatch) {
-        throw new Error(`Face not recognized (best match: ${(bestSimilarity * 100).toFixed(1)}%). Please register first.`)
+        throw new Error(`Face not recognized (best match: ${(bestSimilarity * 100).toFixed(1)}%, threshold: ${thresholdPercent}%). Please register first.`)
       }
 
       console.log(`✅ RECOGNIZED: ${bestMatch.name} with ${(bestSimilarity * 100).toFixed(1)}% confidence`)
