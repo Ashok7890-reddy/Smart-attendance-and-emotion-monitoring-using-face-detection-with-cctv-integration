@@ -1,0 +1,82 @@
+﻿
+> smart-attendance-frontend@1.0.0 build
+> vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+npm : 
+[baseline-browser-mapping] 
+The data in this module is 
+over two months old.  To 
+ensure accurate Baseline 
+data, please update: `npm 
+i baseline-browser-mapping@
+latest -D`
+At line:1 char:1
++ npm run build 2>&1 | 
+Out-File -FilePath 
+build_output.txt -Encoding 
+ut ...
++ ~~~~~~~~~~~~~~~~~~
+    + CategoryInfo         
+     : NotSpecified: ([ba  
+  seline-brows...ping@la   
+ test -D`:String) [], R    
+emoteException
+    + FullyQualifiedErrorI 
+   d : NativeCommandError
+ 
+Browserslist: browsers 
+data (caniuse-lite) is 6 
+months old. Please run:
+  npx update-browserslist-d
+b@latest
+  Why you should do it 
+regularly: https://github.c
+om/browserslist/update-db#r
+eadme
+[32mΓ£ô[39m 88 modules transformed.
+[31mx[39m Build failed 
+in 5.09s
+[31merror during build:
+[31m[vite:load-fallback] 
+Could not load C:\Users\Ash
+ok\OneDrive\Desktop\caps-fi
+nal\frontend\src/services/e
+nhancedFaceService 
+(imported by 
+src/pages/GateCamera.tsx): 
+ENOENT: no such file or 
+directory, open 'C:\Users\A
+shok\OneDrive\Desktop\caps-
+final\frontend\src\services
+\enhancedFaceService'[31m
+    at async open (node:int
+ernal/fs/promises:639:25)
+    at async 
+Object.readFile (node:inter
+nal/fs/promises:1242:14)
+    at async Object.load (f
+ile:///C:/Users/Ashok/OneDr
+ive/Desktop/caps-final/fron
+tend/node_modules/vite/dist
+/node/chunks/dep-BK3b2jBa.j
+s:65357:25)
+    at async PluginDriver.h
+ookFirstAndGetPlugin (file:
+///C:/Users/Ashok/OneDrive/
+Desktop/caps-final/frontend
+/node_modules/rollup/dist/e
+s/shared/node-entry.js:2230
+8:28)
+    at async file:///C:/Use
+rs/Ashok/OneDrive/Desktop/c
+aps-final/frontend/node_mod
+ules/rollup/dist/es/shared/
+node-entry.js:21308:33
+    at async Queue.work (fi
+le:///C:/Users/Ashok/OneDri
+ve/Desktop/caps-final/front
+end/node_modules/rollup/dis
+t/es/shared/node-entry.js:2
+2536:32)[39m

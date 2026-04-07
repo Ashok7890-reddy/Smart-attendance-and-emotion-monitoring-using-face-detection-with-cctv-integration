@@ -3,7 +3,6 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from '@/store/authStore'
 import { AuthPage } from '@/components/Auth/AuthPage'
 import { ProtectedRoute } from '@/components/Auth/ProtectedRoute'
-import { FaceServiceInitializer } from '@/components/System/FaceServiceInitializer'
 import { DashboardLayout } from '@/components/Layout/DashboardLayout'
 import { Dashboard } from '@/pages/Dashboard'
 import { Analytics } from '@/pages/Analytics'
@@ -18,8 +17,7 @@ const App: React.FC = () => {
   const { isAuthenticated } = useAuthStore()
 
   return (
-    <FaceServiceInitializer>
-      <Routes>
+    <Routes>
       <Route 
         path="/login" 
         element={
@@ -116,8 +114,7 @@ const App: React.FC = () => {
       </Route>
       
       <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </FaceServiceInitializer>
+    </Routes>
   )
 }
 

@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from 'react-query'
 import { AttendanceReport } from '@/types'
-import { attendanceAPI } from '@/services/api'
 
 export const useReports = () => {
   const [startDate, setStartDate] = useState(() => {

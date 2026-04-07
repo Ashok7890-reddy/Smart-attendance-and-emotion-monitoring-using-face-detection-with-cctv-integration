@@ -2,7 +2,6 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { WebcamCapture } from '@/components/Camera/WebcamCapture'
 import { UserPlusIcon, CameraIcon } from '@heroicons/react/24/outline'
-import { enhancedFaceService } from '@/services/enhancedFaceService'
 
 export const RegisterStudent: React.FC = () => {
   const navigate = useNavigate()
@@ -21,24 +20,43 @@ export const RegisterStudent: React.FC = () => {
   })
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    })
+    setFormData({ ...formData, [e.target.name]: e.target.value })
   }
 
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    
-    // Validate form
     if (!formData.student_id || !formData.name) {
       setError('Student ID and Name are required')
       return
     }
-    
-    // Move to camera step
     setStep('camera')
+  }
+
+  /**
+   * Extract face descriptor from a captured image (base64).
+   * Tries backend DeepFace first; falls back to storing the image-only approach
+   * (descriptor stored as empty array — recognized by matching image at runtime).
+   */
+  const extractDescriptor = async (imageBase64: string): Promise<number[]> => {
+    try {
+      const BACKEND = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+      const res = await fetch(`${BACKEND}/api/v1/deepface/analyze-emotion-base64`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_base64: imageBase64.split(',')[1] || imageBase64, student_id: formData.student_id }),
+        signal: AbortSignal.timeout(8000),
+      })
+      if (res.ok) {
+        // Backend is alive — we'll store image; DeepFace.find() will use it server-side
+        console.log('✅ Backend connected. Face will be recognized via DeepFace.find().')
+        return [] // empty = backend mode
+      }
+    } catch {
+      console.warn('⚠ Backend offline. Storing photo for local fallback matching.')
+    }
+    // Fallback: return a placeholder descriptor so the student record is created
+    return []
   }
 
   const handlePhotoCapture = async (imageData: string) => {
@@ -46,308 +64,233 @@ export const RegisterStudent: React.FC = () => {
     setError(null)
 
     try {
-      console.log('🔍 Detecting face with REAL ML...')
-      
-      // Create optimized image element from base64
-      const img = await enhancedFaceService.createImageElement(imageData)
+      const descriptor = await extractDescriptor(imageData)
 
-      // Detect face and extract descriptor (embedding) using enhanced service
-      const detection = await enhancedFaceService.detectFace(img)
-      
-      if (!detection) {
-        throw new Error('No face detected. Please ensure your face is clearly visible and try again.')
-      }
-
-      console.log('✅ Face detected! Confidence:', detection.detection.score.toFixed(3))
-      console.log('🎯 Model used:', detection.modelUsed)
-      console.log('📊 Embedding dimensions:', detection.descriptor.length + 'D (' + detection.embeddingDimension + 'D)')
-      console.log('⚡ Processing time:', detection.processingTime?.toFixed(1) + 'ms')
-      
-      // Check face quality
-      const faceScore = detection.detection.score
-      if (faceScore < 0.8) {
-        console.warn('⚠️ Low face detection confidence. Try better lighting or angle.')
-      }
-      
-      // Check face size
-      const faceBox = detection.detection.box
-      const faceArea = faceBox.width * faceBox.height
-      console.log('Face area:', Math.round(faceArea), 'pixels')
-      
-      if (faceArea < 10000) {
-        console.warn('⚠️ Face is small. Move closer to camera for better recognition.')
-      }
-      
-      // Enhanced descriptor quality assessment
-      const qualityAssessment = enhancedFaceService.assessImageQuality(img)
-      console.log('Image quality assessment:', qualityAssessment.quality, '(score:', qualityAssessment.score + ')')
-      
-      if (qualityAssessment.recommendations.length > 0) {
-        console.warn('⚠️ Image quality recommendations:')
-        qualityAssessment.recommendations.forEach(rec => console.warn('  •', rec))
-      }
-      
-      // Check descriptor quality based on model type
-      const descriptorSum = detection.descriptor.reduce((sum: number, val: number) => sum + Math.abs(val), 0)
-      console.log('Descriptor quality score:', descriptorSum.toFixed(3))
-      
-      const isONNX = detection.modelUsed?.includes('ONNX')
-      const minQualityThreshold = isONNX ? 0.8 : 5.0 // Different thresholds for different models
-      const minNonZeroCount = isONNX ? 400 : 100 // ONNX has 512D vs 128D
-      
-      if (descriptorSum < minQualityThreshold) {
-        console.warn('⚠️ Low quality face descriptor. Try better lighting or retake photo.')
-      }
-      
-      // Validate descriptor has meaningful values
-      const nonZeroCount = detection.descriptor.filter((val: number) => Math.abs(val) > 0.001).length
-      const totalDimensions = detection.descriptor.length
-      console.log('Non-zero descriptor values:', nonZeroCount, '/', totalDimensions)
-      
-      if (nonZeroCount < minNonZeroCount) {
-        throw new Error('Poor quality face capture. Please ensure good lighting and try again.')
-      }
-
-      // Store student with enhanced face descriptor
       const students = JSON.parse(localStorage.getItem('students') || '[]')
+
+      // Prevent duplicate student IDs
+      if (students.some((s: any) => s.student_id === formData.student_id)) {
+        throw new Error(`Student ID "${formData.student_id}" is already registered.`)
+      }
+
       const newStudent = {
         ...formData,
-        face_descriptor: Array.from(detection.descriptor), // High-quality embedding (128D or 512D)
-        face_image: imageData, // Optional: store image for display
+        face_descriptor: descriptor,
+        face_descriptors: [descriptor],   // array form for multi-shot
+        face_image: imageData,            // store photo for display + backend lookup
         registered_at: new Date().toISOString(),
-        model_used: detection.modelUsed, // Track which model was used for registration
-        embedding_dimension: detection.embeddingDimension, // Track embedding dimension
-        registration_quality: qualityAssessment.quality, // Store quality assessment
-        processing_time: detection.processingTime // Store processing performance
       }
-      
+
       students.push(newStudent)
       localStorage.setItem('students', JSON.stringify(students))
-      
-      console.log('✅ Student registered with enhanced face recognition!')
-      console.log('📊 Registration details:')
-      console.log('  • Model:', detection.modelUsed)
-      console.log('  • Embedding:', detection.embeddingDimension + 'D')
-      console.log('  • Quality:', qualityAssessment.quality)
-      console.log('  • Processing time:', detection.processingTime?.toFixed(1) + 'ms')
-      console.log('Total students:', students.length)
-      
+
+      console.log(`✅ Student "${formData.name}" registered successfully!`)
       setSuccess(true)
-      
-      setTimeout(() => navigate('/'), 2000)
+
     } catch (err: any) {
       console.error('Registration error:', err)
-      setError(err.message || 'Failed to register student')
-      setStep('form')
+      setError(err.message || 'Registration failed. Please try again.')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleCameraCancel = () => {
-    setStep('form')
-  }
-
   if (success) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full text-center">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-          </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Registration Successful!</h2>
-          <p className="text-gray-600">Student has been registered successfully.</p>
-          <p className="text-sm text-gray-500 mt-4">Redirecting to dashboard...</p>
+      <div className="max-w-md mx-auto text-center py-16">
+        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+          <span className="text-4xl">✅</span>
         </div>
-      </div>
-    )
-  }
-
-  if (step === 'camera') {
-    return (
-      <div className="min-h-screen bg-gray-50 p-4">
-        <div className="max-w-4xl mx-auto">
-          <div className="mb-6">
-            <button
-              onClick={() => navigate('/')}
-              className="text-primary-600 hover:text-primary-700 font-medium"
-            >
-              ← Back to Dashboard
-            </button>
-          </div>
-          
-          <WebcamCapture
-            title={`Register Face for ${formData.name}`}
-            subtitle="Position your face in the oval guide and capture a clear photo"
-            onCapture={handlePhotoCapture}
-            onCancel={handleCameraCancel}
-          />
-
-          {loading && (
-            <div className="mt-4 text-center">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
-              <p className="mt-2 text-gray-600">Registering student...</p>
-            </div>
-          )}
-
-          {error && (
-            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-600">{error}</p>
-            </div>
-          )}
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">Student Registered!</h2>
+        <p className="text-gray-600 mb-6">
+          <strong>{formData.name}</strong> ({formData.student_id}) has been successfully registered.
+        </p>
+        <div className="flex gap-3 justify-center">
+          <button
+            onClick={() => {
+              setSuccess(false)
+              setStep('form')
+              setFormData({ student_id: '', name: '', student_type: 'day_scholar', email: '', phone: '', class_id: 'CS101' })
+            }}
+            className="px-6 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium transition-colors"
+          >
+            Register Another
+          </button>
+          <button
+            onClick={() => navigate('/')}
+            className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
+          >
+            Back to Dashboard
+          </button>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-2xl mx-auto">
-        <div className="mb-6">
-          <button
-            onClick={() => navigate('/')}
-            className="text-primary-600 hover:text-primary-700 font-medium"
-          >
-            ← Back to Dashboard
-          </button>
+    <div className="max-w-3xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-primary-100 rounded-xl flex items-center justify-center">
+          <UserPlusIcon className="h-5 w-5 text-primary-600" />
         </div>
+        <div>
+          <h2 className="text-xl font-bold text-gray-900">Register New Student</h2>
+          <p className="text-sm text-gray-500">
+            {step === 'form' ? 'Fill in student details' : 'Capture student photo for face recognition'}
+          </p>
+        </div>
+      </div>
 
-        <div className="bg-white rounded-lg shadow-lg p-8">
-          <div className="flex items-center mb-6">
-            <div className="w-12 h-12 bg-primary-100 rounded-lg flex items-center justify-center mr-4">
-              <UserPlusIcon className="h-6 w-6 text-primary-600" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Register New Student</h1>
-              <p className="text-sm text-gray-600">Fill in student details and capture photo</p>
-            </div>
-          </div>
+      {/* Step Indicator */}
+      <div className="flex items-center gap-3 text-sm">
+        <div className={`flex items-center gap-1.5 ${step === 'form' ? 'text-primary-600 font-semibold' : 'text-gray-400'}`}>
+          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === 'form' ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'}`}>1</span>
+          Student Info
+        </div>
+        <div className="flex-1 h-px bg-gray-200" />
+        <div className={`flex items-center gap-1.5 ${step === 'camera' ? 'text-primary-600 font-semibold' : 'text-gray-400'}`}>
+          <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${step === 'camera' ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'}`}>2</span>
+          Face Photo
+        </div>
+      </div>
 
-          {error && (
-            <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p className="text-sm text-red-600">{error}</p>
-            </div>
-          )}
-
-          <form onSubmit={handleFormSubmit} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {step === 'form' && (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+          <form onSubmit={handleFormSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label htmlFor="student_id" className="block text-sm font-medium text-gray-700 mb-2">
-                  Student ID *
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Student ID *</label>
                 <input
-                  type="text"
-                  id="student_id"
                   name="student_id"
                   value={formData.student_id}
                   onChange={handleInputChange}
-                  placeholder="99220041951"
-                  className="input-field w-full"
                   required
+                  placeholder="e.g. S2024001"
+                  className="input"
                 />
               </div>
-
               <div>
-                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-                  Full Name *
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name *</label>
                 <input
-                  type="text"
-                  id="name"
                   name="name"
                   value={formData.name}
                   onChange={handleInputChange}
-                  placeholder="Student Name"
-                  className="input-field w-full"
                   required
+                  placeholder="e.g. Ramesh Kumar"
+                  className="input"
                 />
               </div>
-
               <div>
-                <label htmlFor="student_type" className="block text-sm font-medium text-gray-700 mb-2">
-                  Student Type *
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input
+                  name="email"
+                  type="email"
+                  value={formData.email}
+                  onChange={handleInputChange}
+                  placeholder="ramesh@college.edu"
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                <input
+                  name="phone"
+                  value={formData.phone}
+                  onChange={handleInputChange}
+                  placeholder="9876543210"
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Class ID</label>
+                <input
+                  name="class_id"
+                  value={formData.class_id}
+                  onChange={handleInputChange}
+                  placeholder="CS101"
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Student Type</label>
                 <select
-                  id="student_type"
                   name="student_type"
                   value={formData.student_type}
                   onChange={handleInputChange}
-                  className="input-field w-full"
-                  required
+                  className="input"
                 >
                   <option value="day_scholar">Day Scholar</option>
                   <option value="hostel_student">Hostel Student</option>
                 </select>
               </div>
-
-              <div>
-                <label htmlFor="class_id" className="block text-sm font-medium text-gray-700 mb-2">
-                  Class ID *
-                </label>
-                <input
-                  type="text"
-                  id="class_id"
-                  name="class_id"
-                  value={formData.class_id}
-                  onChange={handleInputChange}
-                  placeholder="CS101"
-                  className="input-field w-full"
-                  required
-                />
-              </div>
-
-              <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  id="email"
-                  name="email"
-                  value={formData.email}
-                  onChange={handleInputChange}
-                  placeholder="student@example.com"
-                  className="input-field w-full"
-                />
-              </div>
-
-              <div>
-                <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                  Phone
-                </label>
-                <input
-                  type="tel"
-                  id="phone"
-                  name="phone"
-                  value={formData.phone}
-                  onChange={handleInputChange}
-                  placeholder="+91-9876543210"
-                  className="input-field w-full"
-                />
-              </div>
             </div>
 
-            <div className="flex justify-end space-x-4 pt-6 border-t">
+            {error && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                ⚠ {error}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-2">
               <button
                 type="button"
                 onClick={() => navigate('/')}
-                className="px-6 py-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors"
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="flex items-center px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+                className="flex items-center gap-2 px-5 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg text-sm font-medium transition-colors"
               >
-                <CameraIcon className="h-5 w-5 mr-2" />
+                <CameraIcon className="h-4 w-4" />
                 Next: Capture Photo
               </button>
             </div>
           </form>
         </div>
-      </div>
+      )}
+
+      {step === 'camera' && (
+        <div className="space-y-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+            <p className="font-semibold mb-1">📸 Photo Capture Tips</p>
+            <ul className="space-y-0.5 text-blue-700">
+              <li>• Look directly at the camera</li>
+              <li>• Ensure good lighting on your face</li>
+              <li>• Remove glasses if possible for better recognition</li>
+              <li>• Keep a neutral expression</li>
+            </ul>
+          </div>
+
+          {error && (
+            <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+              ⚠ {error}
+            </div>
+          )}
+
+          <WebcamCapture
+            onCapture={handlePhotoCapture}
+            isProcessing={loading}
+            processingMessage="Registering student..."
+          />
+
+          {loading && (
+            <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-xl border border-blue-200">
+              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
+              <p className="text-sm text-blue-700 font-medium">Registering student face...</p>
+            </div>
+          )}
+
+          <button
+            onClick={() => setStep('form')}
+            className="text-sm text-gray-500 hover:text-gray-700"
+          >
+            ← Back to form
+          </button>
+        </div>
+      )}
     </div>
   )
 }

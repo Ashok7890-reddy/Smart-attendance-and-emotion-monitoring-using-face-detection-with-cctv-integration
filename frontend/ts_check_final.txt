@@ -1,0 +1,27 @@
+﻿src/components/Auth/LoginForm.tsx(3,33): error TS6133: 'UserIcon' is declared but its value is never read.
+src/components/Auth/LoginForm.tsx(3,43): error TS6133: 'LockClosedIcon' is declared but its value is never read.
+src/components/Auth/SignupForm.tsx(3,33): error TS6133: 'UserIcon' is declared but its value is never read.
+src/components/Auth/SignupForm.tsx(3,43): error TS6133: 'EnvelopeIcon' is declared but its value is never read.
+src/components/Auth/SignupForm.tsx(3,57): error TS6133: 'LockClosedIcon' is declared but its value is never read.
+src/components/Dashboard/StudentList.tsx(132,48): error TS2769: No overload matches this call.
+  Overload 1 of 4, '(value: string | number | Date): Date', gave the following error.
+    Argument of type 'string | true' is not assignable to parameter of type 'string | number | Date'.
+      Type 'boolean' is not assignable to type 'string | number | Date'.
+  Overload 2 of 4, '(value: string | number): Date', gave the following error.
+    Argument of type 'string | true' is not assignable to parameter of type 'string | number'.
+      Type 'boolean' is not assignable to type 'string | number'.
+src/components/Dashboard/StudentList.tsx(138,49): error TS2769: No overload matches this call.
+  Overload 1 of 4, '(value: string | number | Date): Date', gave the following error.
+    Argument of type 'string | true' is not assignable to parameter of type 'string | number | Date'.
+      Type 'boolean' is not assignable to type 'string | number | Date'.
+  Overload 2 of 4, '(value: string | number): Date', gave the following error.
+    Argument of type 'string | true' is not assignable to parameter of type 'string | number'.
+      Type 'boolean' is not assignable to type 'string | number'.
+src/components/Dashboard/SystemStatus.tsx(2,32): error TS6133: 'ClockIcon' is declared but its value is never read.
+src/components/Dashboard/SystemStatus.tsx(2,60): error TS6133: 'ExclamationTriangleIcon' is declared but its value is never read.
+src/pages/GateCamera.tsx(5,24): error TS6133: 'captureFrameBase64' is declared but its value is never read.
+src/pages/RegisterStudent.tsx(275,13): error TS2322: Type '{ onCapture: (imageData: string) => Promise<void>; isProcessing: boolean; processingMessage: string; }' is not assignable to type 'IntrinsicAttributes & WebcamCaptureProps'.
+  Property 'isProcessing' does not exist on type 'IntrinsicAttributes & WebcamCaptureProps'.
+src/services/faceService.ts(111,3): error TS6133: 'imageBase64' is declared but its value is never read.
+src/services/faceService.ts(112,3): error TS6133: 'sessionId' is declared but its value is never read.
+src/store/authStore.ts(26,11): error TS6133: 'get' is declared but its value is never read.

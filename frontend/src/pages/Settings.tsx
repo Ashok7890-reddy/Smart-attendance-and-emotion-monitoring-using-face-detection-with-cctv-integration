@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { FaceRecognitionSettings } from '@/components/Settings/FaceRecognitionSettings'
+import { UserManagementTab } from '@/components/Settings/UserManagementTab'
 import { CogIcon, EyeIcon, ChartBarIcon, UserGroupIcon } from '@heroicons/react/24/outline'
 
 export const Settings: React.FC = () => {
@@ -187,42 +188,7 @@ export const Settings: React.FC = () => {
               <UserGroupIcon className="h-6 w-6 text-primary-600 mr-3" />
               <h2 className="text-xl font-semibold text-gray-900">User Management</h2>
             </div>
-            
-            <div className="space-y-6">
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="text-lg font-medium text-gray-900 mb-2">Student Database</h3>
-                <p className="text-sm text-gray-600 mb-4">Manage registered students and their face recognition data.</p>
-                
-                <div className="flex flex-wrap gap-3">
-                  <button className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
-                    View All Students
-                  </button>
-                  <button className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors">
-                    Export Student Data
-                  </button>
-                  <button className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors">
-                    Backup Database
-                  </button>
-                  <button className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
-                    Clear All Data
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="text-lg font-medium text-gray-900 mb-2">Faculty Access</h3>
-                <p className="text-sm text-gray-600 mb-4">Manage faculty accounts and permissions.</p>
-                
-                <div className="flex flex-wrap gap-3">
-                  <button className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors">
-                    View Faculty
-                  </button>
-                  <button className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors">
-                    Add Faculty
-                  </button>
-                </div>
-              </div>
-            </div>
+            <UserManagementTab />
           </div>
         )}
       </div>

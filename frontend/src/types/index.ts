@@ -8,13 +8,16 @@ export interface User {
 export interface AttendanceSession {
   id: string
   classId: string
-  facultyId: string
+  facultyId?: string
   startTime: string
-  endTime?: string
-  totalRegistered: number
-  totalDetected: number
+  endTime?: string | null
+  totalStudents?: number
+  totalRegistered?: number
+  totalDetected?: number
+  presentStudents?: number
+  absentStudents?: number
   attendancePercentage: number
-  status: 'active' | 'completed'
+  status?: 'active' | 'completed'
 }
 
 export interface Student {
@@ -22,9 +25,14 @@ export interface Student {
   name: string
   studentId: string
   type: 'day_scholar' | 'hostel_student'
+  classId?: string
+  email?: string
+  phone?: string
   isPresent: boolean
-  gateEntry?: string
-  classroomEntry?: string
+  gateEntry?: string | boolean
+  classroomEntry?: string | boolean
+  emotion?: string
+  confidence?: number
 }
 
 export interface EmotionStatistics {

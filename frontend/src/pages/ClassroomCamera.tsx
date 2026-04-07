@@ -1,812 +1,483 @@
-import React, { useState } from 'react'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { AutoCaptureCamera } from '@/components/Camera/AutoCaptureCamera'
-import { EmotionAnalytics } from '@/components/EmotionAnalytics'
-import { AcademicCapIcon, UserGroupIcon } from '@heroicons/react/24/outline'
-import { enhancedFaceService } from '@/services/enhancedFaceService'
-import { emotionAPI } from '@/services/api'
+import { useSessionStore } from '@/store/sessionStore'
+import { analyzeFrame, captureFrameBase64, checkBackendHealth, FaceRecognitionResult } from '@/services/faceService'
 
-interface AttendanceEntry {
-  student_id: string
-  name: string
-  student_type: string
-  timestamp: string
-  confidence: number
-  status: 'success' | 'error'
-  emotion?: string
-  emotion_confidence?: number
-  engagement?: string
-  engagement_score?: number
-  emotion_breakdown?: any
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface DetectionLog {
+  ts: string
+  students: FaceRecognitionResult[]
+  facesTotal: number
+  unrecognized: number
+  backendOnline: boolean
+  error?: string
 }
 
-interface SessionSummary {
-  sessionId: string
-  startTime: string
-  endTime: string
-  totalStudents: number
-  presentStudents: string[]
-  absentStudents: string[]
-  engagementStats: {
-    interested: number
-    bored: number
-    confused: number
-    sleepy: number
+// ─── Emotion badge ────────────────────────────────────────────────────────────
+const EmotionBadge: React.FC<{ emotion: string }> = ({ emotion }) => {
+  const map: Record<string, { bg: string; label: string }> = {
+    happy:     { bg: 'bg-green-100 text-green-700',  label: '😊 Happy' },
+    surprised: { bg: 'bg-blue-100 text-blue-700',   label: '😲 Surprised' },
+    neutral:   { bg: 'bg-gray-100 text-gray-600',   label: '😐 Neutral' },
+    sad:       { bg: 'bg-indigo-100 text-indigo-600',label: '😢 Sad' },
+    angry:     { bg: 'bg-red-100 text-red-700',     label: '😠 Angry' },
+    disgusted: { bg: 'bg-purple-100 text-purple-600',label: '🤢 Disgusted' },
+    fearful:   { bg: 'bg-yellow-100 text-yellow-700',label: '😨 Fearful' },
   }
+  const style = map[emotion?.toLowerCase()] || map.neutral
+  return <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${style.bg}`}>{style.label}</span>
 }
 
-// Map emotions to engagement levels for classroom evaluation
-const getEngagement = (emotion: string): string => {
-  const engagementMap: { [key: string]: string } = {
-    'happy': 'interested',
-    'surprised': 'interested',
-    'neutral': 'bored',
-    'sad': 'sleepy',
-    'disgusted': 'bored',
-    'angry': 'confused',
-    'fearful': 'confused'
-  }
-  return engagementMap[emotion] || 'bored'
-}
+// ─── Engagement color ─────────────────────────────────────────────────────────
+const engagementColor = (eng: string) => ({
+  interested: 'text-green-600',
+  bored:      'text-yellow-600',
+  confused:   'text-orange-500',
+  sleepy:     'text-red-500',
+}[eng] || 'text-gray-600')
 
+// ─── Main component ───────────────────────────────────────────────────────────
 export const ClassroomCamera: React.FC = () => {
   const navigate = useNavigate()
-  const [entries, setEntries] = useState<AttendanceEntry[]>([])
-  const [processing, setProcessing] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const captureTimerRef = useRef<NodeJS.Timeout | null>(null)
+
+  const { isActive, sessionId, classId } = useSessionStore()
+
+  const [cameraOn, setCameraOn] = useState(false)
+  const [capturing, setCapturing] = useState(false)
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null)
+  const [captureInterval, setCaptureInterval] = useState(5) // seconds
+  const [logs, setLogs] = useState<DetectionLog[]>([])
+  const [lastResult, setLastResult] = useState<DetectionLog | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [sessionActive, setSessionActive] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const [sessionStartTime, setSessionStartTime] = useState<string | null>(null)
-  const [showSubmissionModal, setShowSubmissionModal] = useState(false)
-  const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const recordCapture = useSessionStore((s) => s.recordCapture)
+  const emotionSummary = useSessionStore((s) => s.getAverageEmotion())
+  const sampleCount = useSessionStore((s) => s.emotionSamples.length)
+  const attendeeCount = useSessionStore((s) => Object.keys(s.attendees).length)
+  const unrecognizedIntruders = useSessionStore((s) => s.unrecognizedIntruders)
 
-  const handlePhotoCapture = async (imageData: string) => {
-    setProcessing(true)
-    setError(null)
+  const [showIntruderAlert, setShowIntruderAlert] = useState(false)
 
+  // Check backend on mount
+  useEffect(() => {
+    checkBackendHealth().then(setBackendOnline)
+  }, [])
+
+  // Auto-start camera if session is active
+  useEffect(() => {
+    if (isActive && !cameraOn) startCamera()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive])
+
+  const startCamera = useCallback(async () => {
     try {
-      console.log('🔍 Detecting faces in classroom with REAL ML...')
-      
-      // Create optimized image element for enhanced recognition
-      const img = await enhancedFaceService.createImageElement(imageData)
-
-      // Detect ALL faces in classroom using enhanced service (ONNX + face-api.js hybrid)
-      const detections = await enhancedFaceService.detectMultipleFaces(img)
-      
-      if (detections.length === 0) {
-        throw new Error('No faces detected in classroom')
-      }
-
-      console.log(`✅ Detected ${detections.length} face(s) in classroom`)
-      if (detections.length > 0) {
-        const modelUsed = detections[0].modelUsed
-        const embeddingDim = detections[0].embeddingDimension
-        console.log(`🎯 Detection model: ${modelUsed} (${embeddingDim}D embeddings)`)
-        console.log(`⚡ Processing time: ${detections[0].processingTime?.toFixed(1)}ms`)
-      }
-
-      // Get registered students
-      const students = JSON.parse(localStorage.getItem('students') || '[]')
-      
-      if (students.length === 0) {
-        throw new Error('No students registered')
-      }
-
-      // Match each detected face
-      const recognizedStudents = []
-      // Lower threshold for better recognition (was 0.60, now 0.35)
-      const threshold = detections.length > 0 && detections[0].modelUsed?.includes('ONNX') ? 0.75 : 0.35
-
-      console.log(`🔍 Comparing ${detections.length} faces against ${students.length} registered students...`)
-      console.log(`🎯 Recognition threshold: ${(threshold * 100).toFixed(0)}%`)
-
-      for (let i = 0; i < detections.length; i++) {
-        const detection = detections[i]
-        let bestMatch = null
-        let bestSimilarity = 0
-        let allSimilarities: Array<{name: string, similarity: number}> = []
-
-        console.log(`\n--- Face ${i + 1} Analysis ---`)
-        console.log(`Face detection confidence: ${(detection.detection.score * 100).toFixed(1)}%`)
-
-        for (const student of students) {
-          const storedDescriptor = new Float32Array(student.face_descriptor)
-          const similarity = enhancedFaceService.compareFaces(
-            detection.descriptor,
-            storedDescriptor
-          )
-
-          allSimilarities.push({name: student.name, similarity})
-          console.log(`Comparing with ${student.name}: ${(similarity * 100).toFixed(1)}%`)
-
-          if (similarity > bestSimilarity) {
-            bestSimilarity = similarity
-            if (similarity > threshold) {
-              bestMatch = student
-              console.log(`✅ New best match: ${student.name} (${(similarity * 100).toFixed(1)}%)`)
-            } else {
-              const thresholdPercent = (threshold * 100).toFixed(0)
-              console.log(`⚠️ Close but below threshold: ${student.name} (${(similarity * 100).toFixed(1)}% < ${thresholdPercent}%)`)
-            }
-          }
-        }
-
-        // Show top 3 matches for debugging
-        const topMatches = allSimilarities
-          .sort((a, b) => b.similarity - a.similarity)
-          .slice(0, 3)
-        console.log(`📊 Top 3 matches for Face ${i + 1}:`)
-        topMatches.forEach((match, idx) => {
-          console.log(`  ${idx + 1}. ${match.name}: ${(match.similarity * 100).toFixed(1)}%`)
-        })
-        
-        console.log(`📊 Face ${i + 1} best similarity: ${(bestSimilarity * 100).toFixed(1)}%`)
-
-        if (bestMatch) {
-          // Emotion analysis: try DeepFace (backend) first, then face-api.js, then fallback
-          let emotionResult
-
-          try {
-            // 1st: Try DeepFace via backend API
-            const deepfaceResult = await emotionAPI.analyzeEmotion(imageData, bestMatch.student_id)
-
-            if (deepfaceResult) {
-              emotionResult = {
-                emotion: deepfaceResult.rawEmotion,
-                confidence: deepfaceResult.confidence,
-                engagement: deepfaceResult.engagement,
-                engagementScore: deepfaceResult.engagementScore
-              }
-              console.log(`🧠 DeepFace emotion: ${deepfaceResult.rawEmotion} → ${deepfaceResult.engagement} (${(deepfaceResult.engagementScore * 100).toFixed(1)}%)`)
-            } else {
-              // 2nd: Fall back to face-api.js emotion detection
-              console.warn('DeepFace unavailable, falling back to face-api.js...')
-              const simpleEmotion = await enhancedFaceService.getSimpleEmotion(imageData)
-              emotionResult = {
-                emotion: simpleEmotion.emotion,
-                confidence: simpleEmotion.confidence,
-                engagement: simpleEmotion.engagement,
-                engagementScore: simpleEmotion.engagementScore
-              }
-              console.log(`🎭 face-api.js emotion: ${simpleEmotion.emotion} → ${simpleEmotion.engagement}`)
-            }
-          } catch (error) {
-            console.warn('Emotion analysis failed, using expression fallback:', error)
-            // 3rd: Last resort — use raw detection expressions
-            const fallbackEmotion = enhancedFaceService.getEmotion(detection.expressions)
-            emotionResult = {
-              emotion: fallbackEmotion.emotion,
-              confidence: fallbackEmotion.confidence,
-              engagement: getEngagement(fallbackEmotion.emotion),
-              engagementScore: 0.5
-            }
-          }
-          
-          recognizedStudents.push({
-            ...bestMatch,
-            confidence: bestSimilarity,
-            emotion: emotionResult.emotion,
-            emotion_confidence: emotionResult.confidence,
-            engagement: emotionResult.engagement,
-            engagement_score: emotionResult.engagementScore
-          })
-        } else {
-          console.log(`Face ${i + 1}: Not recognized (best: ${(bestSimilarity * 100).toFixed(1)}%)`)
-        }
-      }
-
-      console.log(`✅ Recognized ${recognizedStudents.length} out of ${detections.length} faces`)
-
-      // Record attendance
-      const attendanceRecords = JSON.parse(localStorage.getItem('attendanceRecords') || '[]')
-      const newRecords = recognizedStudents.map(student => ({
-        session_id: sessionId,
-        student_id: student.student_id,
-        name: student.name,
-        timestamp: new Date().toISOString(),
-        confidence: student.confidence,
-        emotion: student.emotion
-      }))
-      
-      attendanceRecords.push(...newRecords)
-      localStorage.setItem('attendanceRecords', JSON.stringify(attendanceRecords))
-
-      // Update UI
-      const newEntries: AttendanceEntry[] = recognizedStudents.map(student => {
-        const engagement = student.engagement || getEngagement(student.emotion)
-        console.log(`🎯 Student: ${student.name}`)
-        console.log(`🎭 Emotion: ${student.emotion} → Engagement: ${engagement}`)
-        
-        return {
-          student_id: student.student_id,
-          name: student.name,
-          student_type: student.student_type,
-          timestamp: new Date().toLocaleTimeString(),
-          confidence: student.confidence,
-          status: 'success',
-          emotion: student.emotion,
-          emotion_confidence: student.emotion_confidence,
-          engagement: engagement,
-          engagement_score: student.engagement_score
-        }
+      setError(null)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        audio: false,
       })
-
-      console.log(`📊 Adding ${newEntries.length} new entries to analytics`)
-      setEntries([...newEntries, ...entries])
-      
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
+      setCameraOn(true)
     } catch (err: any) {
-      console.error('Attendance error:', err)
-      setError(err.message)
-    } finally {
-      setProcessing(false)
+      setError(`Camera access denied: ${err.message}`)
     }
-  }
+  }, [])
 
-  const startSession = () => {
-    const newSessionId = `session-${Date.now()}`
-    const startTime = new Date().toISOString()
-    
-    setSessionActive(true)
-    setSessionId(newSessionId)
-    setSessionStartTime(startTime)
-    setEntries([])
-    setError(null)
-    
-    console.log(`📚 Started attendance session: ${newSessionId}`)
-  }
-
-  const endSession = () => {
-    if (!sessionId || !sessionStartTime) return
-    
-    // Generate session summary
-    const endTime = new Date().toISOString()
-    const uniqueStudents = [...new Set(entries.filter(e => e.status === 'success').map(e => e.student_id))]
-    const allStudents = JSON.parse(localStorage.getItem('students') || '[]')
-    const presentStudentIds = uniqueStudents
-    const absentStudentIds = allStudents
-      .map((s: any) => s.student_id)
-      .filter((id: string) => !presentStudentIds.includes(id))
-    
-    // Calculate engagement statistics
-    const engagementStats = {
-      interested: entries.filter(e => e.engagement === 'interested').length,
-      bored: entries.filter(e => e.engagement === 'bored').length,
-      confused: entries.filter(e => e.engagement === 'confused').length,
-      sleepy: entries.filter(e => e.engagement === 'sleepy').length
+  const stopCamera = useCallback(() => {
+    if (captureTimerRef.current) {
+      clearInterval(captureTimerRef.current)
+      captureTimerRef.current = null
     }
-    
-    const summary: SessionSummary = {
-      sessionId,
-      startTime: sessionStartTime,
-      endTime,
-      totalStudents: allStudents.length,
-      presentStudents: presentStudentIds,
-      absentStudents: absentStudentIds,
-      engagementStats
-    }
-    
-    setSessionSummary(summary)
-    setSessionActive(false)
-    setShowSubmissionModal(true)
-    
-    console.log(`📚 Ended attendance session: ${sessionId}`)
-    console.log(`👥 Present: ${presentStudentIds.length}/${allStudents.length} students`)
-  }
+    setCapturing(false)
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+    streamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
+    setCameraOn(false)
+  }, [])
 
-  const submitAttendance = async () => {
-    if (!sessionSummary) return
-    
-    setSubmitting(true)
-    
+  // Capture a single frame and analyze
+  const captureAndAnalyze = useCallback(async () => {
+    if (!videoRef.current || !sessionId) return
+
+    const b64 = captureFrameBase64(videoRef.current, 0.8)
+    if (!b64) return
+
     try {
-      // Get existing submitted sessions
-      const submittedSessions = JSON.parse(localStorage.getItem('submittedSessions') || '[]')
-      
-      // Create final attendance submission
-      const submission = {
-        ...sessionSummary,
-        submittedAt: new Date().toISOString(),
-        submittedBy: 'faculty', // In real app, get from auth context
-        status: 'submitted',
-        finalAttendance: sessionSummary.presentStudents.map(studentId => {
-          const student = JSON.parse(localStorage.getItem('students') || '[]')
-            .find((s: any) => s.student_id === studentId)
-          const studentEntries = entries.filter(e => e.student_id === studentId && e.status === 'success')
-          const avgConfidence = studentEntries.reduce((sum, e) => sum + e.confidence, 0) / studentEntries.length
-          const dominantEmotion = studentEntries.length > 0 ? studentEntries[studentEntries.length - 1].emotion : 'neutral'
-          
-          return {
-            student_id: studentId,
-            name: student?.name || 'Unknown',
-            student_type: student?.student_type || 'unknown',
-            status: 'present',
-            confidence: avgConfidence,
-            emotion: dominantEmotion,
-            detectionCount: studentEntries.length
-          }
-        })
-      }
-      
-      // Add absent students
-      const absentStudents = JSON.parse(localStorage.getItem('students') || '[]')
-        .filter((s: any) => sessionSummary.absentStudents.includes(s.student_id))
-        .map((student: any) => ({
-          student_id: student.student_id,
-          name: student.name,
-          student_type: student.student_type,
-          status: 'absent',
-          confidence: 0,
-          emotion: null,
-          detectionCount: 0
-        }))
-      
-      submission.finalAttendance.push(...absentStudents)
-      
-      // Save submission
-      submittedSessions.push(submission)
-      localStorage.setItem('submittedSessions', JSON.stringify(submittedSessions))
-      
-      // Update student attendance records
-      const attendanceHistory = JSON.parse(localStorage.getItem('attendanceHistory') || '[]')
-      submission.finalAttendance.forEach(record => {
-        attendanceHistory.push({
-          ...record,
-          session_id: sessionSummary.sessionId,
-          date: new Date().toISOString().split('T')[0],
-          submitted_at: submission.submittedAt
-        })
-      })
-      localStorage.setItem('attendanceHistory', JSON.stringify(attendanceHistory))
-      
-      console.log('✅ Attendance submitted successfully!')
-      console.log(`📊 Final attendance: ${submission.finalAttendance.filter(s => s.status === 'present').length}/${submission.finalAttendance.length} present`)
-      
-      // Reset state
-      setShowSubmissionModal(false)
-      setSessionSummary(null)
-      setSessionId(null)
-      setSessionStartTime(null)
-      setEntries([])
-      
-      // Show success message
-      alert('Attendance submitted successfully!')
-      
-    } catch (error) {
-      console.error('Failed to submit attendance:', error)
-      alert('Failed to submit attendance. Please try again.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
+      const result = await analyzeFrame(b64, sessionId)
+      const online = !result.error?.includes('Backend offline')
+      setBackendOnline(online)
 
-  const cancelSubmission = () => {
-    setShowSubmissionModal(false)
-    // Allow faculty to continue the session or start a new one
-    setSessionSummary(null)
-  }
+      const logEntry: DetectionLog = {
+        ts: new Date().toLocaleTimeString(),
+        students: result.recognizedStudents,
+        facesTotal: result.totalFaces,
+        unrecognized: result.unrecognizedCount,
+        backendOnline: online,
+        error: result.error,
+      }
+
+      setLastResult(logEntry)
+      setLogs((prev) => [logEntry, ...prev].slice(0, 50))
+
+      if (result.recognizedStudents.length > 0 || (result.unrecognizedFaces && result.unrecognizedFaces.length > 0)) {
+        recordCapture(
+          { recognizedStudents: result.recognizedStudents }, 
+          result.unrecognizedFaces
+        )
+      }
+
+      if (result.unrecognizedCount > 0) {
+        setShowIntruderAlert(true)
+        setTimeout(() => setShowIntruderAlert(false), 3000)
+      }
+
+    } catch (err: any) {
+      console.error('[ClassroomCamera] Capture failed:', err.message)
+    }
+  }, [sessionId, recordCapture])
+
+  const startCapturing = useCallback(() => {
+    if (!isActive) {
+      setError('No active session. Start a session on the Dashboard first.')
+      return
+    }
+    setCapturing(true)
+    captureAndAnalyze() // immediate first capture
+    captureTimerRef.current = setInterval(captureAndAnalyze, captureInterval * 1000)
+  }, [isActive, captureInterval, captureAndAnalyze])
+
+  const stopCapturing = useCallback(() => {
+    if (captureTimerRef.current) {
+      clearInterval(captureTimerRef.current)
+      captureTimerRef.current = null
+    }
+    setCapturing(false)
+  }, [])
+
+  // Cleanup on unmount
+  useEffect(() => () => {
+    stopCapturing()
+    // Don't stop camera/session on navigate — session persists
+  }, [stopCapturing])
+
+  const emotionBars = [
+    { key: 'interested', label: '😊 Interested', color: 'bg-green-500', value: emotionSummary.interested },
+    { key: 'bored',      label: '😑 Bored',      color: 'bg-yellow-400', value: emotionSummary.bored },
+    { key: 'confused',   label: '😕 Confused',   color: 'bg-orange-400', value: emotionSummary.confused },
+    { key: 'sleepy',     label: '😴 Sleepy',     color: 'bg-red-400',    value: emotionSummary.sleepy },
+  ]
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="mb-6 flex items-center justify-between">
-          <button
-            onClick={() => navigate('/')}
-            className="text-primary-600 hover:text-primary-700 font-medium"
-          >
-            ← Back to Dashboard
-          </button>
-          <div className="flex items-center space-x-4">
-            {sessionActive ? (
-              <>
-                <div className="flex items-center space-x-2 text-green-600">
-                  <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                  <span className="font-medium">Session Active</span>
+    <div className="space-y-4">
+      {/* Status Bar */}
+      <div className="flex items-center justify-between bg-white rounded-xl border border-gray-200 px-5 py-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          {isActive ? (
+            <>
+              <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-sm font-semibold text-green-700">Session Active — Class: {classId}</span>
+            </>
+          ) : (
+            <>
+              <span className="w-2.5 h-2.5 rounded-full bg-gray-300" />
+              <span className="text-sm text-gray-500">No active session</span>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-3 text-xs">
+          <span className={backendOnline === true ? 'text-green-600' : backendOnline === false ? 'text-orange-500' : 'text-gray-400'}>
+            {backendOnline === true ? '🟢 DeepFace backend online' : backendOnline === false ? '🟡 Backend offline (local fallback)' : '⚪ Checking backend…'}
+          </span>
+          {!isActive && (
+            <button
+              onClick={() => navigate('/')}
+              className="px-3 py-1 bg-primary-600 text-white rounded-lg text-xs font-medium hover:bg-primary-700 transition-colors"
+            >
+              Start Session →
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        {/* Camera Feed */}
+        <div className="xl:col-span-2 space-y-4">
+          <div className="bg-black rounded-2xl overflow-hidden aspect-video relative">
+            <video
+              ref={videoRef}
+              className="w-full h-full object-cover"
+              autoPlay
+              playsInline
+              muted
+            />
+            {!cameraOn && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center text-gray-400">
+                  <div className="text-6xl mb-3">📷</div>
+                  <p className="text-sm">Camera is off</p>
                 </div>
-                <div className="text-sm text-gray-600">
-                  Students Detected: <span className="font-semibold text-primary-600">
-                    {[...new Set(entries.filter(e => e.status === 'success').map(e => e.student_id))].length}
-                  </span>
-                </div>
-                <button
-                  onClick={endSession}
-                  className="px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg transition-colors"
-                >
-                  End & Review
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={startSession}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
-              >
-                Start Session
-              </button>
+              </div>
             )}
+            
+            {showIntruderAlert && (
+              <div className="absolute top-4 inset-x-0 mx-auto w-fit bg-red-600 border border-red-400 text-white font-bold px-6 py-2 rounded-full shadow-2xl animate-pulse flex items-center gap-2 z-50">
+                <span className="text-xl">⚠️</span> UNKNOWN FACE DETECTED!
+              </div>
+            )}
+            
+
+            {capturing && (
+              <div className="absolute top-3 left-3 flex items-center gap-1.5 bg-red-600/90 text-white text-xs px-2 py-1 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                RECORDING · Every {captureInterval}s
+              </div>
+            )}
+            {lastResult && capturing && (
+              <div className="absolute bottom-3 left-3 right-3 bg-black/60 backdrop-blur-sm rounded-xl p-3 text-white text-xs">
+                <div className="flex justify-between mb-1">
+                  <span>Detected faces: <strong>{lastResult.facesTotal}</strong></span>
+                  <span>Recognized: <strong>{lastResult.students.length}</strong></span>
+                  <span>Unknown: <strong>{lastResult.unrecognized}</strong></span>
+                </div>
+                {lastResult.students.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {lastResult.students.map((s) => (
+                      <span key={s.studentId} className="bg-white/20 rounded px-1.5 py-0.5 text-xs">
+                        {s.name} — {s.emotion}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Controls */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              {!cameraOn ? (
+                <button
+                  onClick={startCamera}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  📷 Start Camera
+                </button>
+              ) : (
+                <button
+                  onClick={stopCamera}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm font-medium transition-colors"
+                >
+                  ⏹ Stop Camera
+                </button>
+              )}
+
+              {cameraOn && !capturing ? (
+                <button
+                  onClick={startCapturing}
+                  disabled={!isActive}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  ▶ Start Attendance Capture
+                </button>
+              ) : cameraOn && capturing ? (
+                <button
+                  onClick={stopCapturing}
+                  className="flex items-center gap-2 px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg text-sm font-medium transition-colors"
+                >
+                  ⏸ Pause Capture
+                </button>
+              ) : null}
+
+              {/* Interval selector */}
+              <div className="flex items-center gap-2 ml-auto">
+                <label className="text-xs text-gray-500">Capture every:</label>
+                <select
+                  value={captureInterval}
+                  onChange={(e) => {
+                    setCaptureInterval(Number(e.target.value))
+                    if (capturing) { stopCapturing(); setTimeout(startCapturing, 100) }
+                  }}
+                  className="text-xs border border-gray-300 rounded-md px-2 py-1"
+                >
+                  {[3, 5, 10, 15, 30].map((v) => (
+                    <option key={v} value={v}>{v}s</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {error && (
+              <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                ⚠ {error}
+              </div>
+            )}
+          </div>
+
+          {/* Detection Log */}
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-800">Detection Log</h3>
+              <button onClick={() => setLogs([])} className="text-xs text-gray-400 hover:text-gray-600">
+                Clear
+              </button>
+            </div>
+            <div className="divide-y divide-gray-50 max-h-56 overflow-y-auto">
+              {logs.length === 0 ? (
+                <div className="px-4 py-6 text-center text-xs text-gray-400">
+                  No detections yet. Start capture to begin.
+                </div>
+              ) : (
+                logs.map((log, i) => (
+                  <div key={i} className="px-4 py-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-mono text-gray-400">{log.ts}</span>
+                      <span className={`text-xs ${log.backendOnline ? 'text-green-600' : 'text-orange-500'}`}>
+                        {log.backendOnline ? 'DeepFace' : 'Local'}
+                      </span>
+                    </div>
+                    {log.students.length === 0 ? (
+                      <p className="text-xs text-gray-400">No students recognized ({log.facesTotal} face{log.facesTotal !== 1 ? 's' : ''} detected)</p>
+                    ) : (
+                      <div className="space-y-1">
+                        {log.students.map((s) => (
+                          <div key={s.studentId} className="flex items-center justify-between">
+                            <span className="text-xs text-gray-700 font-medium">{s.name}</span>
+                            <div className="flex items-center gap-2">
+                              <EmotionBadge emotion={s.emotion} />
+                              <span className={`text-xs font-medium ${engagementColor(s.engagement)}`}>
+                                {s.engagement}
+                              </span>
+                              <span className="text-xs text-gray-400">{Math.round(s.confidence * 100)}%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
 
-        {!sessionActive ? (
-          <div className="bg-white rounded-lg shadow-lg p-12 text-center">
-            <AcademicCapIcon className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">No Active Session</h2>
-            <p className="text-gray-600 mb-6">Start a session to begin taking attendance</p>
-            <button
-              onClick={startSession}
-              className="px-6 py-3 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
-            >
-              Start Attendance Session
-            </button>
+        {/* Right Panel — Stats */}
+        <div className="space-y-4">
+          {/* Session Stats */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-gray-800 mb-3">Session Stats</h3>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: 'Recognized', value: attendeeCount, color: 'text-green-600' },
+                { label: 'Samples', value: sampleCount, color: 'text-blue-600' },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="bg-gray-50 rounded-lg p-3 text-center">
+                  <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                  <p className="text-xs text-gray-500">{label}</p>
+                </div>
+              ))}
+            </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-            {/* Camera Section */}
-            <div className="lg:col-span-2 xl:col-span-2">
-              <AutoCaptureCamera
-                title="Classroom Attendance Camera - Auto Capture"
-                subtitle="Camera automatically captures and marks attendance every 5 seconds"
-                onCapture={handlePhotoCapture}
-                captureInterval={5000}
-              />
 
-              {processing && (
-                <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <div className="flex items-center">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-3"></div>
-                    <span className="text-blue-700">Detecting faces and marking attendance...</span>
-                  </div>
-                </div>
-              )}
-
-              {error && (
-                <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm text-red-600">{error}</p>
-                </div>
-              )}
-
-              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="text-sm text-yellow-800 font-medium mb-2">💡 Auto-Capture Mode</p>
-                <ul className="text-xs text-yellow-700 space-y-1">
-                  <li>• Camera captures automatically every 5 seconds</li>
-                  <li>• All registered students are marked present</li>
-                  <li>• Click "Start Auto Capture" to begin</li>
-                  <li>• Click "Pause" to stop auto-capture</li>
-                </ul>
-              </div>
-
-              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm text-blue-800 font-medium mb-2">📋 Attendance Submission</p>
-                <ul className="text-xs text-blue-700 space-y-1">
-                  <li>• Click "End & Review" when class is finished</li>
-                  <li>• Review attendance summary before submitting</li>
-                  <li>• Submitted attendance will be saved permanently</li>
-                  <li>• View submitted records in Reports section</li>
-                </ul>
-              </div>
+          {/* Emotion Summary */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-800">Avg Emotion Analysis</h3>
+              <span className="text-xs text-gray-400">{sampleCount} samples</span>
             </div>
 
-            {/* Right Sidebar - Attendance & Analytics */}
-            <div className="lg:col-span-2 xl:col-span-1 space-y-6">
-              {/* Emotion Analytics Dashboard */}
-              <EmotionAnalytics entries={entries} />
-
-              {/* Attendance Log Section */}
-              <div>
-              <div className="bg-white rounded-lg shadow-lg p-6">
-                <div className="flex items-center mb-4">
-                  <UserGroupIcon className="h-6 w-6 text-primary-600 mr-2" />
-                  <h3 className="text-lg font-semibold text-gray-900">Attendance Log</h3>
-                </div>
-
-                <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                  <div className="text-sm text-gray-600">
-                    <p>Session ID: <span className="font-mono text-xs">{sessionId}</span></p>
-                    <p className="mt-1">Students Marked: <span className="font-semibold text-primary-600">
-                      {entries.filter(e => e.status === 'success').length}
-                    </span></p>
-                  </div>
-                </div>
-
-                {/* Emotion Analytics */}
-                {entries.length > 0 && (
-                  <div className="mb-4 p-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-lg border border-purple-200">
-                    <h4 className="text-sm font-semibold text-purple-900 mb-3">😊 Class Engagement</h4>
-                    {(() => {
-                      const interested = entries.filter(e => e.engagement === 'interested').length
-                      const bored = entries.filter(e => e.engagement === 'bored').length
-                      const confused = entries.filter(e => e.engagement === 'confused').length
-                      const sleepy = entries.filter(e => e.engagement === 'sleepy').length
-                      const total = entries.length
-
-                      return (
-                        <div className="space-y-2">
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-green-700 font-medium">😊 Interested</span>
-                              <span className="text-green-700 font-bold">{interested} ({total > 0 ? Math.round(interested/total*100) : 0}%)</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div className="bg-green-500 h-2 rounded-full" style={{width: `${total > 0 ? (interested/total*100) : 0}%`}}></div>
-                            </div>
-                          </div>
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-yellow-700 font-medium">😐 Bored</span>
-                              <span className="text-yellow-700 font-bold">{bored} ({total > 0 ? Math.round(bored/total*100) : 0}%)</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div className="bg-yellow-500 h-2 rounded-full" style={{width: `${total > 0 ? (bored/total*100) : 0}%`}}></div>
-                            </div>
-                          </div>
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-orange-700 font-medium">😕 Confused</span>
-                              <span className="text-orange-700 font-bold">{confused} ({total > 0 ? Math.round(confused/total*100) : 0}%)</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div className="bg-orange-500 h-2 rounded-full" style={{width: `${total > 0 ? (confused/total*100) : 0}%`}}></div>
-                            </div>
-                          </div>
-                          <div>
-                            <div className="flex justify-between text-xs mb-1">
-                              <span className="text-red-700 font-medium">😴 Sleepy</span>
-                              <span className="text-red-700 font-bold">{sleepy} ({total > 0 ? Math.round(sleepy/total*100) : 0}%)</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div className="bg-red-500 h-2 rounded-full" style={{width: `${total > 0 ? (sleepy/total*100) : 0}%`}}></div>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })()}
-                  </div>
-                )}
-
-                <div className="space-y-3 max-h-96 overflow-y-auto">
-                  {entries.length === 0 ? (
-                    <p className="text-sm text-gray-500 text-center py-8">
-                      No students detected yet. Capture a photo to begin.
-                    </p>
-                  ) : (
-                    entries.map((entry, index) => (
+            {sampleCount === 0 ? (
+              <p className="text-xs text-gray-400 text-center py-4">No data yet</p>
+            ) : (
+              <div className="space-y-3">
+                {emotionBars.map(({ key, label, color, value }) => (
+                  <div key={key}>
+                    <div className="flex justify-between text-xs text-gray-600 mb-1">
+                      <span>{label}</span>
+                      <span className="font-semibold">{value}%</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2.5">
                       <div
-                        key={index}
-                        className={`p-3 rounded-lg border ${
-                          entry.status === 'success'
-                            ? 'bg-green-50 border-green-200'
-                            : 'bg-red-50 border-red-200'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <p className={`font-medium text-sm ${
-                                entry.status === 'success' ? 'text-green-900' : 'text-red-900'
-                              }`}>
-                                {entry.name}
-                              </p>
-                              {entry.emotion && (
-                                <span className="text-lg" title={`${entry.emotion} (${(entry.emotion_confidence! * 100).toFixed(0)}%)`}>
-                                  {entry.emotion === 'happy' && '😊'}
-                                  {entry.emotion === 'sad' && '😢'}
-                                  {entry.emotion === 'angry' && '😠'}
-                                  {entry.emotion === 'fearful' && '😨'}
-                                  {entry.emotion === 'surprised' && '😲'}
-                                  {entry.emotion === 'disgusted' && '🤢'}
-                                  {entry.emotion === 'neutral' && '😐'}
-                                </span>
-                              )}
-                            </div>
-                            <p className={`text-xs ${
-                              entry.status === 'success' ? 'text-green-600' : 'text-red-600'
-                            }`}>
-                              ID: {entry.student_id}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              {entry.student_type}
-                              {entry.status === 'success' && ` • ${(entry.confidence * 100).toFixed(0)}% match`}
-                            </p>
-                            {entry.emotion && entry.engagement && (
-                              <div className="mt-1 flex items-center gap-1">
-                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                                  entry.engagement === 'interested' ? 'bg-green-100 text-green-700' :
-                                  entry.engagement === 'bored' ? 'bg-yellow-100 text-yellow-700' :
-                                  entry.engagement === 'confused' ? 'bg-orange-100 text-orange-700' :
-                                  'bg-red-100 text-red-700'
-                                }`}>
-                                  {entry.engagement}
-                                </span>
-                                <span className="text-xs text-gray-500">
-                                  {entry.emotion} ({(entry.emotion_confidence! * 100).toFixed(0)}%)
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                          <span className={`text-xs ${
-                            entry.status === 'success' ? 'text-green-600' : 'text-red-600'
-                          }`}>
-                            {entry.timestamp}
-                          </span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm text-blue-800 font-medium mb-2">ℹ️ Classroom Attendance</p>
-                <ul className="text-xs text-blue-700 space-y-1">
-                  <li>• Required for ALL students</li>
-                  <li>• Day scholars need gate entry first</li>
-                  <li>• Hostel students: classroom only</li>
-                  <li>• Multiple captures allowed</li>
-                </ul>
-              </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Attendance Submission Modal */}
-        {showSubmissionModal && sessionSummary && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-xl font-bold text-gray-900">Submit Attendance</h2>
-                  <button
-                    onClick={cancelSubmission}
-                    className="text-gray-400 hover:text-gray-600"
-                  >
-                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-
-                {/* Session Summary */}
-                <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-                  <h3 className="font-semibold text-gray-900 mb-3">Session Summary</h3>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-600">Session ID:</span>
-                      <p className="font-mono text-xs">{sessionSummary.sessionId}</p>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Duration:</span>
-                      <p>{new Date(sessionSummary.startTime).toLocaleTimeString()} - {new Date(sessionSummary.endTime).toLocaleTimeString()}</p>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Total Students:</span>
-                      <p className="font-semibold">{sessionSummary.totalStudents}</p>
-                    </div>
-                    <div>
-                      <span className="text-gray-600">Present:</span>
-                      <p className="font-semibold text-green-600">{sessionSummary.presentStudents.length}</p>
+                        className={`${color} h-2.5 rounded-full transition-all duration-700`}
+                        style={{ width: `${value}%` }}
+                      />
                     </div>
                   </div>
-                </div>
-
-                {/* Attendance Overview */}
-                <div className="mb-6">
-                  <h3 className="font-semibold text-gray-900 mb-3">Attendance Overview</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg">
-                      <span className="text-green-800 font-medium">Present Students</span>
-                      <span className="text-green-800 font-bold">{sessionSummary.presentStudents.length}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
-                      <span className="text-red-800 font-medium">Absent Students</span>
-                      <span className="text-red-800 font-bold">{sessionSummary.absentStudents.length}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
-                      <span className="text-blue-800 font-medium">Attendance Rate</span>
-                      <span className="text-blue-800 font-bold">
-                        {Math.round((sessionSummary.presentStudents.length / sessionSummary.totalStudents) * 100)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Engagement Statistics */}
-                <div className="mb-6">
-                  <h3 className="font-semibold text-gray-900 mb-3">Class Engagement</h3>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="p-3 bg-green-50 rounded-lg">
-                      <div className="text-green-800 font-medium">😊 Interested</div>
-                      <div className="text-green-800 font-bold">{sessionSummary.engagementStats.interested}</div>
-                    </div>
-                    <div className="p-3 bg-yellow-50 rounded-lg">
-                      <div className="text-yellow-800 font-medium">😐 Bored</div>
-                      <div className="text-yellow-800 font-bold">{sessionSummary.engagementStats.bored}</div>
-                    </div>
-                    <div className="p-3 bg-orange-50 rounded-lg">
-                      <div className="text-orange-800 font-medium">😕 Confused</div>
-                      <div className="text-orange-800 font-bold">{sessionSummary.engagementStats.confused}</div>
-                    </div>
-                    <div className="p-3 bg-red-50 rounded-lg">
-                      <div className="text-red-800 font-medium">😴 Sleepy</div>
-                      <div className="text-red-800 font-bold">{sessionSummary.engagementStats.sleepy}</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Present Students List */}
-                {sessionSummary.presentStudents.length > 0 && (
-                  <div className="mb-6">
-                    <h3 className="font-semibold text-gray-900 mb-3">Present Students ({sessionSummary.presentStudents.length})</h3>
-                    <div className="max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3">
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        {sessionSummary.presentStudents.map(studentId => {
-                          const student = JSON.parse(localStorage.getItem('students') || '[]')
-                            .find((s: any) => s.student_id === studentId)
-                          return (
-                            <div key={studentId} className="text-green-700">
-                              {student?.name || studentId}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Absent Students List */}
-                {sessionSummary.absentStudents.length > 0 && (
-                  <div className="mb-6">
-                    <h3 className="font-semibold text-gray-900 mb-3">Absent Students ({sessionSummary.absentStudents.length})</h3>
-                    <div className="max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3">
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        {sessionSummary.absentStudents.map(studentId => {
-                          const student = JSON.parse(localStorage.getItem('students') || '[]')
-                            .find((s: any) => s.student_id === studentId)
-                          return (
-                            <div key={studentId} className="text-red-700">
-                              {student?.name || studentId}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="flex justify-end space-x-4 pt-4 border-t">
-                  <button
-                    onClick={cancelSubmission}
-                    disabled={submitting}
-                    className="px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={submitAttendance}
-                    disabled={submitting}
-                    className="px-6 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors disabled:opacity-50 flex items-center"
-                  >
-                    {submitting ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                        Submitting...
-                      </>
-                    ) : (
-                      'Submit Attendance'
-                    )}
-                  </button>
-                </div>
-
-                <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    <strong>Note:</strong> Once submitted, this attendance record will be finalized and saved to the system. 
-                    You can view submitted records in the Reports section.
+                ))}
+                <div className="pt-2 border-t border-gray-100">
+                  <p className="text-xs text-center text-gray-600">
+                    Dominant: <span className="font-semibold capitalize text-gray-900">{emotionSummary.dominant}</span>
+                  </p>
+                  <p className="text-xs text-center text-primary-600 font-semibold mt-1">
+                    Engagement Score: {Math.round(emotionSummary.avgEngagementScore * 100)}%
                   </p>
                 </div>
               </div>
+            )}
+          </div>
+
+          {/* Present Students */}
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-gray-800 mb-3">
+              Present Students ({attendeeCount})
+            </h3>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {attendeeCount === 0 ? (
+                <p className="text-xs text-gray-400 text-center py-3">No students detected yet</p>
+              ) : (
+                Object.values(useSessionStore((s) => s.attendees)).map((a) => (
+                  <div key={a.studentId} className="flex items-center justify-between py-1">
+                    <div>
+                      <p className="text-xs font-medium text-gray-800">{a.name}</p>
+                      <p className="text-xs text-gray-400">{a.detectionCount}× detected</p>
+                    </div>
+                    <EmotionBadge emotion={a.emotions[a.emotions.length - 1] || 'neutral'} />
+                  </div>
+                ))
+              )}
             </div>
           </div>
-        )}
+
+          {/* Intruders Panel */}
+          {unrecognizedIntruders && unrecognizedIntruders.length > 0 && (
+            <div className="bg-white rounded-xl border border-red-200 p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-red-700 mb-3 flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-red-600 animate-ping" />
+                Unknown Attendees ({unrecognizedIntruders.length})
+              </h3>
+              <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                {[...unrecognizedIntruders].reverse().map((intruder, idx) => (
+                  <div key={idx} className="flex-shrink-0 w-20 h-24 bg-gray-100 rounded-lg overflow-hidden border border-red-100 shadow-sm relative group">
+                    <img src={intruder.imageBase64} alt="Unknown" className="w-full h-full object-cover" />
+                    <div className="absolute bottom-0 inset-x-0 bg-black/60 text-[10px] text-white p-1 truncate text-center">
+                      {intruder.timestamp.split('T')[1].split('.')[0]}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Backend Info */}
+          <div className="bg-gray-50 rounded-xl border border-gray-200 p-4">
+            <h3 className="text-xs font-semibold text-gray-600 mb-2">Face Recognition Engine</h3>
+            <div className="space-y-1 text-xs text-gray-500">
+              <p>🧠 Model: Facenet512</p>
+              <p>🔍 Detector: RetinaFace</p>
+              <p>🎭 Emotion: DeepFace Analyze</p>
+              <p className={backendOnline ? 'text-green-600' : 'text-orange-500'}>
+                {backendOnline
+                  ? '✅ Running on backend'
+                  : '⚠ Fallback mode (start backend for full accuracy)'}
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

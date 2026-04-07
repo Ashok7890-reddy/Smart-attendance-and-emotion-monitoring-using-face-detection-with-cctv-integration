@@ -1,103 +1,70 @@
-import { useState, useEffect } from 'react'
+/**
+ * useAttendanceSession — thin wrapper around sessionStore.
+ * Keeps backward compatibility with Dashboard components.
+ */
+import { useMemo } from 'react'
+import { useSessionStore } from '@/store/sessionStore'
 import { AttendanceSession, Student } from '@/types'
 
-// MOCK MODE: Use localStorage instead of API
 export const useAttendanceSession = () => {
-  const [currentSession, setCurrentSession] = useState<AttendanceSession | null>(null)
-  const [students, setStudents] = useState<Student[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [isStarting, setIsStarting] = useState(false)
-  const [isEnding, setIsEnding] = useState(false)
+  const store = useSessionStore()
 
-  // Load students from localStorage on mount
-  useEffect(() => {
-    loadStudents()
-    // Refresh every 5 seconds
-    const interval = setInterval(loadStudents, 5000)
-    return () => clearInterval(interval)
-  }, [])
+  // Convert attendees map → Student[]
+  const students: Student[] = useMemo(() => {
+    const allStudents: any[] = JSON.parse(localStorage.getItem('students') || '[]')
+    const attendeeKeys = new Set(Object.keys(store.attendees))
 
-  const loadStudents = () => {
-    try {
-      const storedStudents = JSON.parse(localStorage.getItem('students') || '[]')
-      const attendanceRecords = JSON.parse(localStorage.getItem('attendanceRecords') || '[]')
-      
-      // Map students with attendance status
-      const studentsWithAttendance: Student[] = storedStudents.map((student: any) => {
-        const hasAttendance = attendanceRecords.some((record: any) => 
-          record.student_id === student.student_id
-        )
-        
-        return {
-          id: student.student_id,
-          studentId: student.student_id,
-          name: student.name,
-          type: student.student_type,
-          classId: student.class_id,
-          email: student.email,
-          phone: student.phone,
-          isPresent: hasAttendance,
-          gateEntry: hasAttendance,
-          classroomEntry: hasAttendance,
-          emotion: 'interested',
-          confidence: 0.95
-        }
-      })
-      
-      setStudents(studentsWithAttendance)
-    } catch (error) {
-      console.error('Error loading students:', error)
-    }
-  }
+    return allStudents.map((s: any) => ({
+      id: s.id || s.student_id,
+      name: s.name,
+      studentId: s.student_id,
+      classId: s.class_id || s.classId,
+      type: (s.student_type || s.type || 'day_scholar') as 'day_scholar' | 'hostel_student',
+      isPresent: attendeeKeys.has(s.student_id),
+      emotion: store.attendees[s.student_id]?.emotions?.slice(-1)[0] || undefined,
+      confidence: store.attendees[s.student_id]?.avgConfidence || 0,
+    }))
+  }, [store.attendees])
 
-  const startSession = async (classId: string) => {
-    setIsStarting(true)
-    try {
-      await new Promise(resolve => setTimeout(resolve, 500))
-      const session: AttendanceSession = {
-        id: `session-${Date.now()}`,
-        classId,
-        startTime: new Date().toISOString(),
-        endTime: null,
+  const presentStudents = students.filter((s) => s.isPresent)
+  const absentStudents = students.filter((s) => !s.isPresent)
+
+  const attendancePercentage =
+    students.length > 0 ? Math.round((presentStudents.length / students.length) * 100) : 0
+
+  // Build a compatible AttendanceSession shape for legacy components
+  const currentSession: AttendanceSession | null = store.isActive
+    ? {
+        id: store.sessionId!,
+        classId: store.classId!,
+        startTime: store.startTime!,
+        attendancePercentage,
+        presentStudents: presentStudents.length,
+        absentStudents: absentStudents.length,
         totalStudents: students.length,
-        presentStudents: 0,
-        absentStudents: students.length,
-        attendancePercentage: 0
+        status: 'active',
       }
-      setCurrentSession(session)
-      localStorage.setItem('currentSession', JSON.stringify(session))
-    } finally {
-      setIsStarting(false)
-    }
+    : null
+
+  const startSession = (classId: string) => {
+    store.startSession(classId)
   }
 
-  const endSession = async (sessionId: string) => {
-    setIsEnding(true)
-    try {
-      await new Promise(resolve => setTimeout(resolve, 500))
-      setCurrentSession(null)
-      localStorage.removeItem('currentSession')
-    } finally {
-      setIsEnding(false)
-    }
+  const endSession = (_sessionId: string) => {
+    return store.endSession()
   }
-
-  const presentStudents = students.filter(s => s.isPresent)
-  const absentStudents = students.filter(s => !s.isPresent)
-  const attendancePercentage = students.length > 0 
-    ? Math.round((presentStudents.length / students.length) * 100) 
-    : 0
 
   return {
     currentSession,
     students,
-    isLoading,
+    isLoading: false,
     startSession,
     endSession,
-    isStarting,
-    isEnding,
+    isStarting: false,
+    isEnding: false,
     presentStudents,
     absentStudents,
     attendancePercentage,
+    emotionSummary: store.getAverageEmotion(),
   }
 }

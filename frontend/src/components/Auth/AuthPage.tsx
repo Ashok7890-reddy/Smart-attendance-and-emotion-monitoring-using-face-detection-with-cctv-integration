@@ -193,14 +193,14 @@ export const AuthPage: React.FC = () => {
       </div>
 
       {/* CSS for animations */}
-      <style jsx>{`
+      <style dangerouslySetInnerHTML={{ __html: `
         @keyframes float {
           0%, 100% { transform: translateY(0px) translateX(0px); }
           25% { transform: translateY(-10px) translateX(5px); }
           50% { transform: translateY(-5px) translateX(-5px); }
           75% { transform: translateY(-15px) translateX(3px); }
         }
-      `}</style>
+      ` }} />
     </div>
   )
 }

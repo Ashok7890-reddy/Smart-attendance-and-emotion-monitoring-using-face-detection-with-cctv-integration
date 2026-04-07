@@ -118,6 +118,7 @@ export const SessionControls: React.FC<SessionControlsProps> = ({
               id="classId"
               value={classId}
               onChange={(e) => setClassId(e.target.value)}
+              onClick={(e) => (e.target as HTMLInputElement).select()}
               className="input-field w-32"
               placeholder="CS101"
             />

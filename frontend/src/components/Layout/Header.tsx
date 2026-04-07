@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { BellIcon, ArrowPathIcon, ChevronDownIcon, ArrowRightOnRectangleIcon, UserIcon } from '@heroicons/react/24/outline'
 import { useAuthStore } from '@/store/authStore'
+import { useSessionStore } from '@/store/sessionStore'
 
 interface HeaderProps {
   title: string
@@ -9,7 +11,9 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ title, subtitle }) => {
   const { user, logout } = useAuthStore()
+  const navigate = useNavigate()
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const { isActive, classId } = useSessionStore()
 
   // Helper function to get username from email
   const getUsernameFromEmail = (email: string): string => {
@@ -30,6 +34,17 @@ export const Header: React.FC<HeaderProps> = ({ title, subtitle }) => {
             <p className="text-sm text-gray-600 mt-1">{subtitle}</p>
           )}
         </div>
+
+        {/* Live Session Badge */}
+        {isActive && (
+          <button
+            onClick={() => navigate('/classroom-camera')}
+            className="flex items-center gap-2 px-3 py-1.5 bg-green-50 border border-green-300 text-green-700 rounded-full text-xs font-semibold hover:bg-green-100 transition-colors"
+          >
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            Session Active · Class {classId}
+          </button>
+        )}
 
         <div className="flex items-center space-x-4">
           {/* Refresh Button */}

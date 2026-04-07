@@ -58,8 +58,9 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToSignup }) => {
               },
             })}
             type="email"
+            autoComplete="email"
             className="w-full px-4 py-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-1 focus:ring-cyan-400/30 focus:border-cyan-400/30 backdrop-blur-md transition-all duration-300 text-center"
-            placeholder="Username"
+            placeholder="Email Address"
           />
           {errors.email && (
             <p className="mt-1 text-sm text-red-300">{errors.email.message}</p>
@@ -77,6 +78,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({ onSwitchToSignup }) => {
               },
             })}
             type={showPassword ? 'text' : 'password'}
+            autoComplete="current-password"
             className="w-full px-4 py-4 bg-white/5 border border-white/10 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-1 focus:ring-cyan-400/30 focus:border-cyan-400/30 backdrop-blur-md transition-all duration-300 text-center"
             placeholder="Password"
           />
